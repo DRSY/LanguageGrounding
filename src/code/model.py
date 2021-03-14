@@ -160,7 +160,8 @@ class AdapterModel(nn.Module):
 
         # ((batch_size, seq_length, project_hidden_size), ..., ())
         hidden_states = outputs[2]
-        assert sequence_output.shape[:-1] == attention_mask.shape
+        if attention_mask is not None:
+            assert sequence_output.shape[:-1] == attention_mask.shape
         hidden_states_last = torch.zeros(
             sequence_output.size()).to(self.args.device)
 
@@ -211,15 +212,14 @@ def test():
     adapter_model.to(device)
     tokenizer = ModelType2Class.get(model_type)[1].from_pretrained(model_name)
     _input = "A man is washing a dish."
-    _input_dict = tokenizer.encode(_input)
-    _input_dict = torch.tensor(_input_dict).to(device).unsqueeze(0)
+    _input_dict = tokenizer(_input, return_tensors='pt').to(device)
     pretrained_model.eval()
     adapter_model.train()
     with torch.no_grad():
-        pretrained_model_output = pretrained_model(_input_dict)
+        pretrained_model_output = pretrained_model(**_input_dict)
         print(pretrained_model_output[0].shape)
-        print(pretrained_model_output[0].device)
-    combined_output = adapter_model(pretrained_model_output)
+    print(_input_dict.attention_mask)
+    combined_output = adapter_model(pretrained_model_output, attention_mask=_input_dict.attention_mask)
     print(combined_output.shape)
     print(combined_output.device)
 
