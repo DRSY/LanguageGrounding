@@ -1,7 +1,6 @@
 from pytorch_transformers.modeling_bert import BertEncoder
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, MSELoss
 from pytorch_transformers import (RobertaTokenizer,
                                   RobertaModel,
                                   BertModel,
@@ -45,11 +44,12 @@ class Adapter(nn.Module):
             self.adapter_config.adapter_size, adapter_config.project_hidden_size)
         self.init_weights()
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, attention_mask):
         down_projected = self.down_project(hidden_states)
 
         input_shape = down_projected.size()[:-1]
-        attention_mask = torch.ones(input_shape, device=self.args.device)
+        if attention_mask is None:
+            attention_mask = torch.ones(input_shape, device=self.args.device)
         encoder_attention_mask = torch.ones(
             input_shape, device=self.args.device)
         if attention_mask.dim() == 3:
@@ -153,11 +153,14 @@ class AdapterModel(nn.Module):
             self.config.hidden_size * 2, self.config.hidden_size)
 
     def forward(self, pretrained_model_outputs, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None):
-
         outputs = pretrained_model_outputs
+
+        # (batch_size, seq_length, project_hidden_size)
         sequence_output = outputs[0]
+
+        # ((batch_size, seq_length, project_hidden_size), ..., ())
         hidden_states = outputs[2]
-        num = len(hidden_states)
+        assert sequence_output.shape[:-1] == attention_mask.shape
         hidden_states_last = torch.zeros(
             sequence_output.size()).to(self.args.device)
 
@@ -168,7 +171,7 @@ class AdapterModel(nn.Module):
         for i, adapter_module in enumerate(self.adapter):
             fusion_state = hidden_states[self.adapter_list[i]
                                          ] + hidden_states_last
-            hidden_states_last = adapter_module(fusion_state)
+            hidden_states_last = adapter_module(fusion_state, attention_mask)
             adapter_hidden_states.append(hidden_states_last)
             adapter_hidden_states_count += 1
             if self.adapter_skip_layers >= 1:  # if adapter_skip_layers>=1, skip connection
