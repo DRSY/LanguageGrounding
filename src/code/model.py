@@ -194,6 +194,80 @@ class AdapterModel(nn.Module):
         logger.info("Saving model checkpoint to %s", save_directory)
 
 
+class TranslationModel(nn.Module):
+    NonLinearity = {
+        'relu': nn.ReLU,
+        'tanh': nn.Tanh,
+        'gelu': nn.GELU,
+    }
+
+    def __init__(self, vision_size, language_size, latent_size, non_linearity: str):
+        super(TranslationModel, self).__init__()
+        self.vision_size = vision_size
+        self.language_size = language_size
+        self.latent_size = latent_size
+        self.non_linearity_class = self.NonLinearity.get(
+            non_linearity, nn.ReLU)
+
+        self.loss_fct = nn.MSELoss()
+
+        # input pipe
+        self.input_pipe_vision = nn.Sequential(
+            nn.Linear(vision_size, vision_size),
+            self.non_linearity_class(),
+            nn.Linear(vision_size, latent_size)
+        )
+        self.input_pipe_language = nn.Sequential(
+            nn.Linear(language_size, language_size),
+            self.non_linearity_class(),
+            nn.Linear(language_size, latent_size)
+        )
+        # output pipe
+        self.output_pipe_vision = nn.Sequential(
+            nn.Linear(latent_size, vision_size),
+            self.non_linearity_class(),
+            nn.Linear(vision_size, vision_size)
+        )
+        self.output_pipe_language = nn.Sequential(
+            nn.Linear(latent_size, language_size),
+            self.non_linearity_class(),
+            nn.Linear(language_size, language_size)
+        )
+        # one-direction pipe
+        self.vision2lang = nn.Sequential(
+            self.input_pipe_vision,
+            self.output_pipe_language
+        )
+        self.language2vision = nn.Sequential(
+            self.input_pipe_language,
+            self.output_pipe_vision
+        )
+        # cyclic pipe
+        self.vision2lang2vision = nn.Sequential(
+            self.vision2lang,
+            self.language2vision
+        )
+        self.language2vision2language = nn.Sequential(
+            self.language2vision,
+            self.vision2lang
+        )
+
+    def forward(self, vision_feature=None, language_feature=None):
+        _loss = 0.0
+        if vision_feature is not None:
+            translated_vision_feature = self.vision2lang2vision(vision_feature)
+            vision_loss = self.loss_fct(
+                translated_vision_feature, vision_feature)
+            _loss = _loss + vision_loss
+        if language_feature is not None:
+            translated_lang_feature = self.language2vision2language(
+                language_feature)
+            lang_loss = self.loss_fct(
+                translated_lang_feature, language_feature)
+            _loss = _loss + lang_loss
+        return _loss
+
+
 def test():
     args = parse_args()
     model_type = args.model_type
@@ -214,7 +288,8 @@ def test():
         pretrained_model_output = pretrained_model(**_input_dict)
         print(pretrained_model_output[0].shape)
     print(_input_dict.attention_mask)
-    combined_output = adapter_model(pretrained_model_output, attention_mask=_input_dict.attention_mask)
+    combined_output = adapter_model(
+        pretrained_model_output, attention_mask=_input_dict.attention_mask)
     print(combined_output.shape)
 
 
