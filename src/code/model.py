@@ -1,11 +1,6 @@
 from pytorch_transformers.modeling_bert import BertEncoder
 import torch
 import torch.nn as nn
-from pytorch_transformers import (RobertaTokenizer,
-                                  RobertaModel,
-                                  BertModel,
-                                  BertTokenizer)
-from pytorch_transformers import AdamW, WarmupLinearSchedule
 import torchvision.models as models
 
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler, TensorDataset, ConcatDataset
@@ -13,7 +8,7 @@ import logging
 import os
 import pprint
 from config import parse_args, ModelType2Class
-from utils import count_parameters, freeze_param
+from utils import *
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -221,7 +216,6 @@ def test():
     print(_input_dict.attention_mask)
     combined_output = adapter_model(pretrained_model_output, attention_mask=_input_dict.attention_mask)
     print(combined_output.shape)
-    print(combined_output.device)
 
 
 if __name__ == '__main__':

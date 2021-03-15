@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-03-14 00:02:02
-LastEditTime: 2021-03-15 00:01:31
+LastEditTime: 2021-03-15 13:03:39
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/config.py
@@ -9,13 +9,15 @@ FilePath: /grounding/src/code/config.py
 from argparse import ArgumentParser
 from pytorch_transformers import (
     RobertaModel,
-    BertModel
+    BertModel,
+    DistilBertModel
 )
-from transformers import BertTokenizer, RobertaTokenizer
+from transformers import BertTokenizer, RobertaTokenizer, DistilBertTokenizer
 
 ModelType2Class = {
     'roberta': (RobertaModel, RobertaTokenizer),
-    'bert': (BertModel, BertTokenizer)
+    'bert': (BertModel, BertTokenizer),
+    'distilbert': (DistilBertModel, DistilBertTokenizer)
 }
 
 

@@ -1,12 +1,19 @@
 '''
 Author: your name
 Date: 2021-03-14 20:24:49
-LastEditTime: 2021-03-14 20:44:03
+LastEditTime: 2021-03-15 13:20:07
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/utils.py
 '''
 from prettytable import PrettyTable
+import inspect
+
+
+def line_numb():
+    '''Returns the current line number in our program'''
+    lineno = inspect.currentframe().f_back.f_lineno
+    print("current line number: {}".format(lineno))
 
 
 def count_parameters(model):
