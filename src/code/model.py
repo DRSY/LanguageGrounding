@@ -20,9 +20,30 @@ class VisionModel(nn.Module):
     def __init__(self):
         super(VisionModel, self).__init__()
         self.full_encoder = models.resnext101_32x8d()
+        self.backbone_encoder = nn.Sequential(
+            *list(self.full_encoder.children())[:-1])
 
     def forward(self, input):
-        pass
+        output = self.backbone_encoder(input)
+        return output
+
+
+class VisionModelWithMLP(nn.Module):
+    def __init__(self, backbone_model, output_size):
+        super(VisionModelWithMLP, self).__init__()
+        self.output_size = output_size
+        self.backbone_model = backbone_model
+        self.final_mlp = nn.Sequential(
+            nn.Linear(output_size, output_size),
+            nn.ReLU(),
+            nn.Linear(output_size, output_size)
+        )
+        freeze_param(self.backbone_model, freeze=True)
+
+    def forward(self, input):
+        o1 = self.backbone_model(input)
+        output = self.final_mlp(o1)
+        return output
 
 
 class Adapter(nn.Module):
@@ -291,6 +312,10 @@ def test():
     combined_output = adapter_model(
         pretrained_model_output, attention_mask=_input_dict.attention_mask)
     print(combined_output.shape)
+
+    translation_model = TranslationModel(2048, 768, 3096, 'relu')
+    vision_feature = torch.randn(32, 2048)
+    lang_feature = torch.randn(32, 768)
 
 
 if __name__ == '__main__':
