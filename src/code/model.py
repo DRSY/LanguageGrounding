@@ -316,6 +316,9 @@ def test():
     translation_model = TranslationModel(2048, 768, 3096, 'relu')
     vision_feature = torch.randn(32, 2048)
     lang_feature = torch.randn(32, 768)
+    _translation_loss = translation_model(
+        vision_feature=vision_feature, language_feature=lang_feature)
+    print(_translation_loss)
 
 
 if __name__ == '__main__':

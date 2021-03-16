@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-03-15 20:11:52
+LastEditTime: 2021-03-15 20:24:41
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -19,6 +19,9 @@ from utils import *
 from model import VisionModel, AdapterModel, PretrainedModel, VisionModelWithMLP, TranslationModel
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                    datefmt='%m/%d/%Y %H:%M:%S',
+                    level=logging.INFO)
 
 
 def train_translation_model():

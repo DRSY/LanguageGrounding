@@ -1,14 +1,23 @@
 '''
 Author: your name
 Date: 2021-03-14 20:24:49
-LastEditTime: 2021-03-15 13:20:07
+LastEditTime: 2021-03-16 16:30:16
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/utils.py
 '''
 from prettytable import PrettyTable
 import inspect
+from torchvision import transforms
 
+# universal transformation for image domain
+image_transformation = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
+])
 
 def line_numb():
     '''Returns the current line number in our program'''
