@@ -1,3 +1,4 @@
+from random import Random
 from pytorch_transformers.modeling_bert import BertEncoder
 import torch
 import torch.nn as nn
@@ -9,6 +10,7 @@ import os
 import pprint
 from config import parse_args, ModelType2Class
 from utils import *
+from data import *
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -25,6 +27,8 @@ class VisionModel(nn.Module):
 
     def forward(self, input):
         output = self.backbone_encoder(input)
+        output = output.squeeze(-1).squeeze(-1)
+        assert len(output.shape) == 2
         return output
 
 
@@ -311,7 +315,6 @@ def test():
     print(_input_dict.attention_mask)
     combined_output = adapter_model(
         pretrained_model_output, attention_mask=_input_dict.attention_mask)
-    print(combined_output.shape)
 
     translation_model = TranslationModel(2048, 768, 3096, 'relu')
     vision_feature = torch.randn(32, 2048)
@@ -319,6 +322,14 @@ def test():
     _translation_loss = translation_model(
         vision_feature=vision_feature, language_feature=lang_feature)
     print(_translation_loss)
+
+    vision_base_model = VisionModel()
+    img_dataset = MonomodalImageDataset()
+    img_loader = DataLoader(img_dataset, batch_size=16, sampler=RandomSampler(img_dataset))
+    for batch in img_loader:
+        output = vision_base_model(batch)
+        print(output.shape)
+        break
 
 
 if __name__ == '__main__':

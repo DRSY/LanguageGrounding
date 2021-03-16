@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:10
-LastEditTime: 2021-03-16 17:26:14
+LastEditTime: 2021-03-16 19:34:15
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/data.py
@@ -36,15 +36,11 @@ class MonomodalImageDataset(Dataset):
 
 
 def test():
-    test_img_pth = "/home/roy/grounding/data/mscoco/images/val2014/COCO_val2014_000000000042.jpg"
-    img = Image.open(test_img_pth)
-    img = image_transformation(img)
     img_dataset = MonomodalImageDataset()
     img_dataloader = DataLoader(img_dataset, batch_size=4, sampler=RandomSampler(img_dataset))
     for batch in img_dataloader:
-        print(type(batch))
-        print(batch.shape)
         break
+
 
 if __name__ == '__main__':
     test()
