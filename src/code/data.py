@@ -1,12 +1,12 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:10
-LastEditTime: 2021-03-16 21:57:18
+LastEditTime: 2021-03-17 00:39:59
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/data.py
 '''
-from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import Dataset, DataLoader, RandomSampler
 from torchvision import transforms
 from PIL import Image
 from utils import image_transformation
@@ -35,7 +35,13 @@ class MonomodalImageDataset(Dataset):
 
     def __getitem__(self, index: int):
         # (3, 224, 224)
-        return image_transformation(Image.open(self.total_img_names[index]))
+        while True:
+            img = Image.open(self.total_img_names[index])
+            if img.mode == 'RGB':
+                break
+            index = random.randint(0, len(self)-1)
+        _img = image_transformation(img)
+        return _img
 
 
 class MonomodalTextDataset(Dataset):
@@ -84,15 +90,15 @@ def test():
     tok = transformers.BertTokenizer.from_pretrained("bert-base-uncased")
     text_dataset = MonomodalTextDataset()
     img_dataset = MonomodalImageDataset()
+    print(len(text_dataset) // len(img_dataset))
+    img_bs = 2
     img_dataloader = DataLoader(
-        img_dataset, batch_size=4, sampler=RandomSampler(img_dataset))
+        img_dataset, batch_size=img_bs, sampler=RandomSampler(img_dataset))
     text_dataloader = DataLoader(text_dataset, collate_fn=MonomodalTextCollator(
-        tok, max_length=20), batch_size=4, sampler=RandomSampler(text_dataset))
-    for tb in text_dataloader:
-        print(tb.input_ids.shape)
-        break
-    for ib in img_dataloader:
-        print(ib.shape)
+        tok, max_length=20), batch_size=img_bs * (len(text_dataset)//len(img_dataset)), sampler=RandomSampler(text_dataset))
+    for i, img_text_batch in enumerate(zip(img_dataloader, text_dataloader)):
+        print(img_text_batch[0].shape)
+        print(img_text_batch[1].input_ids.shape)
         break
 
 
