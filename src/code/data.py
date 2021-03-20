@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:10
-LastEditTime: 2021-03-20 16:38:36
+LastEditTime: 2021-03-20 16:47:58
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/data.py
@@ -12,6 +12,7 @@ from PIL import Image
 from utils import image_transformation
 import os
 import random
+import torch
 import json
 import transformers
 
@@ -128,11 +129,17 @@ class PairedCrossModalDataset(Dataset):
 
 class PairedCrossModalCollator:
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, tokenizer, max_length) -> None:
+        self.tokenizer = tokenizer
+        self.max_length = max_length
 
     def __call__(self, batch_list):
-        pass
+        packed_img = torch.stack([pair[0]
+                                  for pair in batch_list], dim=0)  # (bs, 3, 224, 224)
+        captions = [pair[1] for pair in batch_list]
+        captions_dict = self.tokenizer(
+            captions, return_tensors='pt', max_length=self.max_length, padding='max_length', truncation=True)
+        return packed_img, captions_dict
 
 
 def test():
