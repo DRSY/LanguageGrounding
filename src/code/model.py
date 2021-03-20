@@ -235,6 +235,10 @@ class TranslationModel(nn.Module):
             non_linearity, nn.ReLU)
 
         self.loss_fct = nn.MSELoss()
+        self.nll = nn.NLLLoss()
+        self.cos = nn.CosineSimilarity(dim=1)
+
+        self.log_softmax = nn.LogSoftmax(dim=1)
 
         # input pipe
         self.input_pipe_vision = nn.Sequential(
@@ -277,20 +281,66 @@ class TranslationModel(nn.Module):
             self.vision2lang
         )
 
+    def contrastive_forward(self, vision_feat, lang_feat):
+        """
+        vision_feat: (batch_size, vision_size)
+        lang`_feat: (batch_size, lang_size)
+        """
+        bs = vision_feat.shape[0]
+        translated_vision_feat = self.language2vision(lang_feat)
+        translated_lang_feat = self.vision2lang(lang_feat)
+        assert translated_vision_feat.shape == vision_feat.shape
+        assert translated_lang_feat.shape == lang_feat.shape
+
+        normalized_vision_feat = torch.norm(vision_feat)
+        normalized_trans_vision_feat = torch.norm(translated_vision_feat)
+        sim_matrix_vision = torch.matmul(
+            normalized_vision_feat, normalized_trans_vision_feat)  # (bs, bs)
+        logsoftmax_matrix_vision = self.log_softmax(
+            sim_matrix_vision)  # (bs, bs)
+        _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
+        infoNCE_loss_vision = self.nll(logsoftmax_matrix_vision, _label_vision)
+
+        normalized_lang_feat = torch.norm(lang_feat)
+        normalized_trans_lang_feat = torch.norm(translated_lang_feat)
+        sim_matrix_lang = torch.matmul(
+            normalized_lang_feat, normalized_trans_lang_feat)  # (bs, bs)
+        logsoftmax_matrix_lang = self.log_softmax(sim_matrix_lang)  # (bs, bs)
+        _label_lang = torch.tensor(list(range(bs))).to(vision_feat.device)
+        infoNCE_loss_lang = self.nll(logsoftmax_matrix_lang, _label_lang)
+
+        infoNCE_loss_total = infoNCE_loss_vision + infoNCE_loss_lang
+        return infoNCE_loss_total
+
     def forward(self, vision_feature=None, language_feature=None):
-        _loss = 0.0
+        cycle_loss = 0.0
+        conicity_loss = 0.0
         if vision_feature is not None:
-            translated_vision_feature = self.vision2lang2vision(vision_feature)
+            _tmp_lang_feat = self.vision2lang(vision_feature)
+            translated_vision_feature = self.language2vision(_tmp_lang_feat)
+            # conicity
+            avg_tmp_lang_feat = torch.mean(_tmp_lang_feat, dim=0).unsqueeze(0)
+            cosine_sim = self.cos(_tmp_lang_feat, avg_tmp_lang_feat)
+            lang_conicity = torch.mean(cosine_sim)
+            # cycle consistency
             vision_loss = self.loss_fct(
                 translated_vision_feature, vision_feature)
-            _loss = _loss + vision_loss
+            cycle_loss = cycle_loss + vision_loss
+            conicity_loss = conicity_loss + lang_conicity
         if language_feature is not None:
-            translated_lang_feature = self.language2vision2language(
-                language_feature)
+            _tmp_vision_feat = self.language2vision(language_feature)
+            translated_lang_feature = self.vision2lang(_tmp_vision_feat)
+            # conicity
+            avg_tmp_vision_feat = torch.mean(
+                _tmp_vision_feat, dim=0).unsqueeze(0)
+            cosine_sim = self.cos(_tmp_vision_feat, avg_tmp_vision_feat)
+            vision_conicity = torch.mean(cosine_sim)
+            # cycle consistency
             lang_loss = self.loss_fct(
                 translated_lang_feature, language_feature)
-            _loss = _loss + lang_loss
-        return _loss
+            cycle_loss = cycle_loss + lang_loss
+            conicity_loss = conicity_loss + vision_conicity
+        return cycle_loss, conicity_loss
 
 
 def test():
@@ -325,7 +375,8 @@ def test():
 
     vision_base_model = VisionModel()
     img_dataset = MonomodalImageDataset()
-    img_loader = DataLoader(img_dataset, batch_size=16, sampler=RandomSampler(img_dataset))
+    img_loader = DataLoader(img_dataset, batch_size=16,
+                            sampler=RandomSampler(img_dataset))
     for batch in img_loader:
         output = vision_base_model(batch)
         print(output.shape)
