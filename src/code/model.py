@@ -2,20 +2,146 @@ from random import Random
 from pytorch_transformers.modeling_bert import BertEncoder
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as models
+import numpy as np
 
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler, TensorDataset, ConcatDataset
+from torch.distributions import Distribution, Uniform
 import logging
 import os
 import pprint
 from config import parse_args, ModelType2Class
 from utils import *
 from data import *
+from made import MADE
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
+
+
+class CouplingLayer(nn.Module):
+    """
+    Implementation of the additive coupling layer from section 3.2 of the NICE
+    paper.
+    """
+
+    def __init__(self, data_dim, hidden_dim, mask, num_layers=4):
+        super().__init__()
+
+        assert data_dim % 2 == 0
+
+        self.mask = mask
+
+        modules = [nn.Linear(data_dim, hidden_dim), nn.LeakyReLU(0.2)]
+        for i in range(num_layers - 2):
+            modules.append(nn.Linear(hidden_dim, hidden_dim))
+            modules.append(nn.LeakyReLU(0.2))
+        modules.append(nn.Linear(hidden_dim, data_dim))
+
+        self.m = nn.Sequential(*modules)
+
+    def forward(self, x, logdet, invert=False):
+        if not invert:
+            x1, x2 = self.mask * x, (1. - self.mask) * x
+            y1, y2 = x1, x2 + (self.m(x1) * (1. - self.mask))
+            return y1 + y2, logdet
+
+        # Inverse additive coupling layer
+        y1, y2 = self.mask * x, (1. - self.mask) * x
+        x1, x2 = y1, y2 - (self.m(y1) * (1. - self.mask))
+        return x1 + x2, logdet
+
+
+class ScalingLayer(nn.Module):
+    """
+    Implementation of the scaling layer from section 3.3 of the NICE paper.
+    """
+
+    def __init__(self, data_dim):
+        super().__init__()
+        self.log_scale_vector = nn.Parameter(
+            torch.randn(1, data_dim, requires_grad=True))
+
+    def forward(self, x, invert=False):
+        # log_det_jacobian = torch.sum(self.log_scale_vector)
+
+        if invert:
+            return torch.exp(- self.log_scale_vector) * x
+
+        return torch.exp(self.log_scale_vector) * x
+
+
+class LogisticDistribution(Distribution):
+    def __init__(self):
+        super().__init__()
+
+    def log_prob(self, x):
+        return -(F.softplus(x) + F.softplus(-x))
+
+    def sample(self, size):
+        z = Uniform(torch.cuda.FloatTensor(
+            [0.]), torch.cuda.FloatTensor([1.])).sample(size).to(torch.device('cuda:2'))
+        return torch.log(z) - torch.log(1. - z)
+
+
+class NICE(nn.Module):
+    def __init__(self, data_dim, latent_dim, num_coupling_layers=3):
+        super().__init__()
+
+        self.data_dim = data_dim
+        self.latent_dim = latent_dim
+
+        # alternating mask orientations for consecutive coupling layers
+        masks = [self._get_mask(data_dim, orientation=(i % 2 == 0))
+                 for i in range(num_coupling_layers)]
+
+        self.coupling_layers = nn.ModuleList([CouplingLayer(data_dim=data_dim,
+                                                            hidden_dim=latent_dim,
+                                                            mask=masks[i], num_layers=4)
+                                              for i in range(num_coupling_layers)])
+
+        self.scaling_layer = ScalingLayer(data_dim=data_dim)
+
+        self.prior = LogisticDistribution()
+
+    def forward(self, x, invert=False):
+        if not invert:
+            z = self.f(x)
+            return z
+
+        return self.f_inverse(x)
+
+    def f(self, x):
+        z = x
+        log_det_jacobian = 0
+        for i, coupling_layer in enumerate(self.coupling_layers):
+            z, log_det_jacobian = coupling_layer(z, log_det_jacobian)
+        z = self.scaling_layer(z)
+        return z
+
+    def f_inverse(self, z):
+        x = z
+        x = self.scaling_layer(x, invert=True)
+        for i, coupling_layer in reversed(list(enumerate(self.coupling_layers))):
+            x, _ = coupling_layer(x, 0, invert=True)
+        return x
+
+    def sample(self, num_samples):
+        z = self.prior.sample([num_samples, self.data_dim]).view(
+            self.samples, self.data_dim)
+        return self.f_inverse(z)
+
+    def _get_mask(self, dim, orientation=True):
+        mask = np.zeros(dim)
+        mask[::2] = 1.
+        if orientation:
+            mask = 1. - mask     # flip mask orientation
+        mask = torch.tensor(mask)
+        mask = mask.to(torch.device('cuda:2'))
+        return mask.float()
 
 
 class VisionModel(nn.Module):
@@ -115,7 +241,6 @@ class PretrainedModel(nn.Module):
         self.model = self.model_class.from_pretrained(
             model_name, output_hidden_states=True)
         self.config = self.model.config
-        count_parameters(self.model)
         for p in self.parameters():
             p.requires_grad = False
 
@@ -240,46 +365,60 @@ class TranslationModel(nn.Module):
 
         self.log_softmax = nn.LogSoftmax(dim=1)
 
+        # NICE model
+        self.vision_downsize = nn.Linear(self.vision_size, self.latent_size)
+        self.lang_downsize = nn.Linear(self.language_size, self.latent_size)
+        self.nice = NICE(self.latent_size, self.latent_size)
+
         # input pipe
-        self.input_pipe_vision = nn.Sequential(
-            nn.Linear(vision_size, vision_size),
-            self.non_linearity_class(),
-            nn.Linear(vision_size, latent_size)
-        )
-        self.input_pipe_language = nn.Sequential(
-            nn.Linear(language_size, language_size),
-            self.non_linearity_class(),
-            nn.Linear(language_size, latent_size)
-        )
-        # output pipe
-        self.output_pipe_vision = nn.Sequential(
-            nn.Linear(latent_size, vision_size),
-            self.non_linearity_class(),
-            nn.Linear(vision_size, vision_size)
-        )
-        self.output_pipe_language = nn.Sequential(
-            nn.Linear(latent_size, language_size),
-            self.non_linearity_class(),
-            nn.Linear(language_size, language_size)
-        )
-        # one-direction pipe
-        self.vision2lang = nn.Sequential(
-            self.input_pipe_vision,
-            self.output_pipe_language
-        )
-        self.language2vision = nn.Sequential(
-            self.input_pipe_language,
-            self.output_pipe_vision
-        )
-        # cyclic pipe
-        self.vision2lang2vision = nn.Sequential(
-            self.vision2lang,
-            self.language2vision
-        )
-        self.language2vision2language = nn.Sequential(
-            self.language2vision,
-            self.vision2lang
-        )
+        # self.input_pipe_vision = nn.Sequential(
+        #     nn.Linear(vision_size, latent_size),
+        #     # self.non_linearity_class(),
+        #     # nn.Linear(vision_size, latent_size)
+        # )
+        # self.input_pipe_language = nn.Sequential(
+        #     nn.Linear(language_size, latent_size),
+        #     # self.non_linearity_class(),
+        #     # nn.Linear(language_size, latent_size)
+        # )
+        # # output pipe
+        # self.output_pipe_vision = nn.Sequential(
+        #     nn.Linear(latent_size, vision_size),
+        #     # self.non_linearity_class(),
+        #     # nn.Linear(vision_size, vision_size)
+        # )
+        # self.output_pipe_language = nn.Sequential(
+        #     nn.Linear(latent_size, language_size),
+        #     # self.non_linearity_class(),
+        #     # nn.Linear(language_size, language_size)
+        # )
+        # # one-direction pipe
+        # self.vision2lang = nn.Sequential(
+        #     self.input_pipe_vision,
+        #     self.output_pipe_language
+        # )
+        # self.language2vision = nn.Sequential(
+        #     self.input_pipe_language,
+        #     self.output_pipe_vision
+        # )
+        # # cyclic pipe
+        # self.vision2lang2vision = nn.Sequential(
+        #     self.vision2lang,
+        #     self.language2vision
+        # )
+        # self.language2vision2language = nn.Sequential(
+        #     self.language2vision,
+        #     self.vision2lang
+        # )
+
+    def NICEFlow(self, feature, invert=False):
+        translated_feat = self.nice(feature, invert=invert)
+        return translated_feat
+
+    def MSE(self, vision_feat, lang_feat, trans_vision_feat, trans_lang_feat):
+        vision_loss = self.loss_fct(trans_vision_feat, vision_feat)
+        lang_loss = self.loss_fct(trans_lang_feat, lang_feat)
+        return vision_loss + lang_loss
 
     def contrastive_forward(self, vision_feat, lang_feat):
         """
@@ -287,28 +426,24 @@ class TranslationModel(nn.Module):
         lang`_feat: (batch_size, lang_size)
         """
         bs = vision_feat.shape[0]
-        translated_vision_feat = self.language2vision(lang_feat)
-        translated_lang_feat = self.vision2lang(vision_feat)
+        # NICE version
+        vision_feat = self.vision_downsize(vision_feat)
+        lang_feat = self.lang_downsize(lang_feat)
+        translated_vision_feat = self.NICEFlow(lang_feat, invert=True)
+        translated_lang_feat = self.NICEFlow(vision_feat)
+
         assert translated_vision_feat.shape == vision_feat.shape
         assert translated_lang_feat.shape == lang_feat.shape
 
-        normalized_vision_feat = torch.nn.functional.normalize(
-            vision_feat, p=2, dim=-1)
-        normalized_trans_vision_feat = torch.nn.functional.normalize(
-            translated_vision_feat, p=2, dim=-1)
         sim_matrix_vision = torch.matmul(
-            normalized_vision_feat, normalized_trans_vision_feat.transpose(0, 1))  # (bs, bs)
+            vision_feat, translated_vision_feat.transpose(0, 1))  # (bs, bs)
         logsoftmax_matrix_vision = self.log_softmax(
             sim_matrix_vision)  # (bs, bs)
         _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
         infoNCE_loss_vision = self.nll(logsoftmax_matrix_vision, _label_vision)
 
-        normalized_lang_feat = torch.nn.functional.normalize(
-            lang_feat, p=2, dim=-1)
-        normalized_trans_lang_feat = torch.nn.functional.normalize(
-            translated_lang_feat, p=2, dim=-1)
         sim_matrix_lang = torch.matmul(
-            normalized_lang_feat, normalized_trans_lang_feat.transpose(0, 1))  # (bs, bs)
+            lang_feat, translated_lang_feat.transpose(0, 1))  # (bs, bs)
         logsoftmax_matrix_lang = self.log_softmax(sim_matrix_lang)  # (bs, bs)
         _label_lang = torch.tensor(list(range(bs))).to(vision_feat.device)
         infoNCE_loss_lang = self.nll(logsoftmax_matrix_lang, _label_lang)
@@ -317,63 +452,52 @@ class TranslationModel(nn.Module):
         return infoNCE_loss_total
 
     def forward(self, vision_feature=None, language_feature=None):
-        cycle_loss = 0.0
         conicity_loss = 0.0
         if vision_feature is not None:
-            _tmp_lang_feat = self.vision2lang(vision_feature)
-            translated_vision_feature = self.language2vision(_tmp_lang_feat)
             # conicity
+            _tmp_lang_feat = self.NICEFlow(
+                self.vision_downsize(vision_feature))
             avg_tmp_lang_feat = torch.mean(_tmp_lang_feat, dim=0).unsqueeze(0)
             cosine_sim = self.cos(_tmp_lang_feat, avg_tmp_lang_feat)
             lang_conicity = torch.mean(cosine_sim)
-            # cycle consistency
-            vision_loss = self.loss_fct(
-                translated_vision_feature, vision_feature)
-            cycle_loss = cycle_loss + vision_loss
             conicity_loss = conicity_loss + lang_conicity
         if language_feature is not None:
-            _tmp_vision_feat = self.language2vision(language_feature)
-            translated_lang_feature = self.vision2lang(_tmp_vision_feat)
             # conicity
+            _tmp_vision_feat = self.NICEFlow(
+                self.lang_downsize(language_feature), invert=True)
             avg_tmp_vision_feat = torch.mean(
                 _tmp_vision_feat, dim=0).unsqueeze(0)
             cosine_sim = self.cos(_tmp_vision_feat, avg_tmp_vision_feat)
             vision_conicity = torch.mean(cosine_sim)
-            # cycle consistency
-            lang_loss = self.loss_fct(
-                translated_lang_feature, language_feature)
-            cycle_loss = cycle_loss + lang_loss
             conicity_loss = conicity_loss + vision_conicity
-        return cycle_loss, conicity_loss
+        return conicity_loss
 
     def eval_grounding(self, vision_feat, lang_feat):
         bs = vision_feat.shape[0]
-        translated_vision_feat = self.language2vision(lang_feat)
-        translated_lang_feat = self.vision2lang(vision_feat)
+        # NICE version
+        vision_feat = self.vision_downsize(vision_feat)
+        lang_feat = self.lang_downsize(lang_feat)
+        translated_vision_feat = self.NICEFlow(lang_feat, invert=True)
+        translated_lang_feat = self.NICEFlow(vision_feat)
+
         assert translated_vision_feat.shape == vision_feat.shape
         assert translated_lang_feat.shape == lang_feat.shape
 
-        normalized_vision_feat = torch.nn.functional.normalize(
-            vision_feat, p=2, dim=-1)
-        normalized_trans_vision_feat = torch.nn.functional.normalize(
-            translated_vision_feat, p=2, dim=-1)
         sim_matrix_vision = torch.matmul(
-            normalized_vision_feat, normalized_trans_vision_feat.transpose(0, 1))  # (bs, bs)
+            vision_feat, translated_vision_feat.transpose(0, 1))  # (bs, bs)
         vision_pred = torch.argmax(sim_matrix_vision, dim=-1)  # (bs,)
         vision_groundtruth = torch.tensor(
             list(range(bs)), dtype=torch.long).to(vision_feat.device)
-        vision_acc = torch.sum(vision_pred == vision_groundtruth).item()
+        assert vision_pred.shape == vision_groundtruth.shape
+        vision_acc = torch.sum(vision_pred == vision_groundtruth).item() / bs
 
-        normalized_lang_feat = torch.nn.functional.normalize(
-            lang_feat, p=2, dim=-1)
-        normalized_trans_lang_feat = torch.nn.functional.normalize(
-            translated_lang_feat, p=2, dim=-1)
         sim_matrix_lang = torch.matmul(
-            normalized_lang_feat, normalized_trans_lang_feat.transpose(0, 1))  # (bs, bs)
+            lang_feat, translated_lang_feat.transpose(0, 1))  # (bs, bs)
         lang_pred = torch.argmax(sim_matrix_lang, dim=-1)  # (bs,)
         lang_groundtruth = torch.tensor(
             list(range(bs)), dtype=torch.long).to(lang_feat.device)
-        lang_acc = torch.sum(lang_pred == lang_groundtruth).item()
+        assert lang_pred.shape == lang_groundtruth.shape
+        lang_acc = torch.sum(lang_pred == lang_groundtruth).item() / bs
         return vision_acc, lang_acc
 
 
@@ -418,4 +542,9 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
+    nice_model = NICE(100, 100, 3)
+    x = torch.randn(32, 100)
+    o = nice_model.forward(x)
+    re_x = nice_model.forward(o, invert=True)
+    print(x)
+    print(re_x)

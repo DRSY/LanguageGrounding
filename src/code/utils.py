@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-03-14 20:24:49
-LastEditTime: 2021-03-16 16:30:16
+LastEditTime: 2021-04-01 23:25:39
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/utils.py
@@ -9,6 +9,9 @@ FilePath: /grounding/src/code/utils.py
 from prettytable import PrettyTable
 import inspect
 from torchvision import transforms
+import torch
+import numpy as np
+import random
 
 # universal transformation for image domain
 image_transformation = transforms.Compose([
@@ -18,6 +21,7 @@ image_transformation = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                          std=[0.229, 0.224, 0.225]),
 ])
+
 
 def line_numb():
     '''Returns the current line number in our program'''
@@ -39,7 +43,17 @@ def count_parameters(model):
     print("Total Trainable Params: {:.2f}M".format(total_params))
     return total_params
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
 
 def freeze_param(model, freeze: bool = True):
     for name, p in model.named_parameters():
         p.requires_grad = not freeze
+
+
+def save_model(model, path):
+    with open(path, 'wb') as f:
+        torch.save(model.state_dict(), f)

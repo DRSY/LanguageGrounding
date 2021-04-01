@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-01 11:39:49
+LastEditTime: 2021-04-01 23:29:37
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -70,9 +70,9 @@ def train_translation_model(args, vision_model, lang_model, adapter_model, trans
 
     # dataloader
     img_dataloader = DataLoader(
-        img_dataset, batch_size=args.pretrain_trans_bs, sampler=RandomSampler(img_dataset))
+        img_dataset, batch_size=args.pretrain_trans_bs, sampler=RandomSampler(img_dataset), num_workers=2)
     text_dataloader = DataLoader(text_dataset, collate_fn=MonomodalTextCollator(
-        tokenizer, max_length=20), batch_size=args.pretrain_trans_bs * text_img_ratio, sampler=RandomSampler(text_dataset))
+        tokenizer, max_length=20), batch_size=args.pretrain_trans_bs * text_img_ratio, sampler=RandomSampler(text_dataset), num_workers=2)
     epoch_iterator = trange(int(args.pretrain_trans_epochs), desc='Epoch')
 
     for epoch in epoch_iterator:
@@ -86,18 +86,19 @@ def train_translation_model(args, vision_model, lang_model, adapter_model, trans
             pretrained_model_output = lang_model(**text_input_feat)
             text_feat = adapter_model(
                 pretrained_model_output, attention_mask=text_input_feat.attention_mask)
-            text_feat = text_feat[:, 0, :]
+            # text_feat = text_feat[:, 0, :]
+            text_feat = torch.mean(text_feat, dim=1)
             assert len(img_feat.shape) == 2
             assert len(text_feat.shape) == 2
-            cycle_loss, conicity_loss = translation_model(
+            conicity_loss = translation_model(
                 vision_feature=img_feat, language_feature=text_feat)
-            loss = cycle_loss + args.w * conicity_loss
+            loss = conicity_loss
             assert loss.requires_grad == True
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            batch_iterator.set_description("Loss: {}, Cycle loss: {}, Conicity loss: {}".format(
-                loss.item(), cycle_loss.item(), conicity_loss.item()))
+            batch_iterator.set_description("Loss: {}, Conicity loss: {}".format(
+                loss.item(), conicity_loss.item()))
 
 
 @torch.no_grad()
@@ -122,7 +123,8 @@ def eval_grounding(args, vision_model, lang_model, adapter_model, translation_mo
         text_feat = text_feat[:, 0, :]
         assert len(img_feat.shape) == 2
         assert len(text_feat.shape) == 2
-        vision_acc, lang_acc = translation_model.eval_grounding(img_feat, text_feat)
+        vision_acc, lang_acc = translation_model.eval_grounding(
+            img_feat, text_feat)
         vision_accs.append(vision_acc)
         lang_accs.append(lang_acc)
     avg_vision_acc = sum(vision_accs) / len(vision_accs)
@@ -196,7 +198,8 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             pretrained_model_output = lang_model(**text_input_feat)
             text_feat = adapter_model(
                 pretrained_model_output, attention_mask=text_input_feat.attention_mask)
-            text_feat = text_feat[:, 0, :]
+            # text_feat = text_feat[:, 0, :]
+            text_feat = torch.mean(text_feat, dim=1)
             assert len(img_feat.shape) == 2
             assert len(text_feat.shape) == 2
             infoNCEloss = translation_model.contrastive_forward(
@@ -206,7 +209,7 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             optimizer.step()
             batch_iterator.set_description(
                 "infoNCE loss: {}".format(infoNCEloss.item()))
-            if batch_iter % args.eval_step == 0:
+            if batch_iter > 0 and batch_iter % args.eval_step == 0:
                 # eval on validation set of MSCOCO
                 vision_acc, lang_acc = eval_grounding(args, vision_model, lang_model, adapter_model,
                                                       translation_model, device, paired_dataloader_val)
@@ -227,6 +230,9 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
 
 
 def main(args):
+    # set random seed
+    set_seed(args.seed)
+
     model_type = args.model_type
     model_name = args.model_name
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -241,8 +247,8 @@ def main(args):
         args.vision_size, args.lang_size, args.latent_size, args.trans_nonlinearity).to(device)
 
     # pretraining using unpaired image-language data
-    # train_translation_model(args,
-    #                         vision_base_model_mlp, language_base_model, adapter_model, translation_model, device)
+    train_translation_model(args,
+                            vision_base_model_mlp, language_base_model, adapter_model, translation_model, device)
 
     # pretraining using paired image-caption data from MSCOCO
     train_grounding(args, vision_base_model_mlp, language_base_model,
