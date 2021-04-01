@@ -288,23 +288,27 @@ class TranslationModel(nn.Module):
         """
         bs = vision_feat.shape[0]
         translated_vision_feat = self.language2vision(lang_feat)
-        translated_lang_feat = self.vision2lang(lang_feat)
+        translated_lang_feat = self.vision2lang(vision_feat)
         assert translated_vision_feat.shape == vision_feat.shape
         assert translated_lang_feat.shape == lang_feat.shape
 
-        normalized_vision_feat = torch.norm(vision_feat)
-        normalized_trans_vision_feat = torch.norm(translated_vision_feat)
+        normalized_vision_feat = torch.nn.functional.normalize(
+            vision_feat, p=2, dim=-1)
+        normalized_trans_vision_feat = torch.nn.functional.normalize(
+            translated_vision_feat, p=2, dim=-1)
         sim_matrix_vision = torch.matmul(
-            normalized_vision_feat, normalized_trans_vision_feat)  # (bs, bs)
+            normalized_vision_feat, normalized_trans_vision_feat.transpose(0, 1))  # (bs, bs)
         logsoftmax_matrix_vision = self.log_softmax(
             sim_matrix_vision)  # (bs, bs)
         _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
         infoNCE_loss_vision = self.nll(logsoftmax_matrix_vision, _label_vision)
 
-        normalized_lang_feat = torch.norm(lang_feat)
-        normalized_trans_lang_feat = torch.norm(translated_lang_feat)
+        normalized_lang_feat = torch.nn.functional.normalize(
+            lang_feat, p=2, dim=-1)
+        normalized_trans_lang_feat = torch.nn.functional.normalize(
+            translated_lang_feat, p=2, dim=-1)
         sim_matrix_lang = torch.matmul(
-            normalized_lang_feat, normalized_trans_lang_feat)  # (bs, bs)
+            normalized_lang_feat, normalized_trans_lang_feat.transpose(0, 1))  # (bs, bs)
         logsoftmax_matrix_lang = self.log_softmax(sim_matrix_lang)  # (bs, bs)
         _label_lang = torch.tensor(list(range(bs))).to(vision_feat.device)
         infoNCE_loss_lang = self.nll(logsoftmax_matrix_lang, _label_lang)
@@ -341,6 +345,36 @@ class TranslationModel(nn.Module):
             cycle_loss = cycle_loss + lang_loss
             conicity_loss = conicity_loss + vision_conicity
         return cycle_loss, conicity_loss
+
+    def eval_grounding(self, vision_feat, lang_feat):
+        bs = vision_feat.shape[0]
+        translated_vision_feat = self.language2vision(lang_feat)
+        translated_lang_feat = self.vision2lang(vision_feat)
+        assert translated_vision_feat.shape == vision_feat.shape
+        assert translated_lang_feat.shape == lang_feat.shape
+
+        normalized_vision_feat = torch.nn.functional.normalize(
+            vision_feat, p=2, dim=-1)
+        normalized_trans_vision_feat = torch.nn.functional.normalize(
+            translated_vision_feat, p=2, dim=-1)
+        sim_matrix_vision = torch.matmul(
+            normalized_vision_feat, normalized_trans_vision_feat.transpose(0, 1))  # (bs, bs)
+        vision_pred = torch.argmax(sim_matrix_vision, dim=-1)  # (bs,)
+        vision_groundtruth = torch.tensor(
+            list(range(bs)), dtype=torch.long).to(vision_feat.device)
+        vision_acc = torch.sum(vision_pred == vision_groundtruth).item()
+
+        normalized_lang_feat = torch.nn.functional.normalize(
+            lang_feat, p=2, dim=-1)
+        normalized_trans_lang_feat = torch.nn.functional.normalize(
+            translated_lang_feat, p=2, dim=-1)
+        sim_matrix_lang = torch.matmul(
+            normalized_lang_feat, normalized_trans_lang_feat.transpose(0, 1))  # (bs, bs)
+        lang_pred = torch.argmax(sim_matrix_lang, dim=-1)  # (bs,)
+        lang_groundtruth = torch.tensor(
+            list(range(bs)), dtype=torch.long).to(lang_feat.device)
+        lang_acc = torch.sum(lang_pred == lang_groundtruth).item()
+        return vision_acc, lang_acc
 
 
 def test():

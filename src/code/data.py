@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:10
-LastEditTime: 2021-03-20 16:47:58
+LastEditTime: 2021-04-01 11:42:58
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/data.py
@@ -87,16 +87,14 @@ class MonomodalTextCollator(object):
         return _input
 
 
-class PairedCrossModalDataset(Dataset):
+class PairedCrossModalTrainDataset(Dataset):
 
     mscoco_train_path: str = "/home/roy/grounding/data/mscoco/images/train2014"
     mscoco_val_path: str = "/home/roy/grounding/data/mscoco/images/val2014"
 
     def __init__(self) -> None:
-        super(PairedCrossModalDataset, self).__init__()
-        self.val_caption_pth = "/home/roy/grounding/data/mscoco/captions/mscoco_nominival.json"
+        super(PairedCrossModalTrainDataset, self).__init__()
         self.train_caption_pth = "/home/roy/grounding/data/mscoco/captions/mscoco_train.json"
-        self.val_caption = json.load(open(self.val_caption_pth))
         self.train_caption = json.load(open(self.train_caption_pth))
         self.img_caption_pairs = []
         for item in self.train_caption:
@@ -104,13 +102,41 @@ class PairedCrossModalDataset(Dataset):
             img_path = os.path.join(self.mscoco_train_path, img_id+".jpg")
             for sent in item['sentf']['mscoco']:
                 self.img_caption_pairs.append((img_path, sent))
+        random.shuffle(self.img_caption_pairs)
+        print("Total number of paired image-caption for training:",
+              len(self.img_caption_pairs))
+
+    def __len__(self) -> int:
+        return len(self.img_caption_pairs)
+
+    def __getitem__(self, index: int):
+        while 1:
+            img_sent_pair = self.img_caption_pairs[index]
+            img_obj = Image.open(img_sent_pair[0])
+            if img_obj.mode == 'RGB':
+                break
+            index = random.randint(0, len(self)-1)
+        _img = image_transformation(img_obj)
+        return _img, img_sent_pair[1]
+
+
+class PairedCrossModalValDataset(Dataset):
+
+    mscoco_train_path: str = "/home/roy/grounding/data/mscoco/images/train2014"
+    mscoco_val_path: str = "/home/roy/grounding/data/mscoco/images/val2014"
+
+    def __init__(self) -> None:
+        super(PairedCrossModalValDataset, self).__init__()
+        self.val_caption_pth = "/home/roy/grounding/data/mscoco/captions/mscoco_nominival.json"
+        self.val_caption = json.load(open(self.val_caption_pth))
+        self.img_caption_pairs = []
         for item in self.val_caption:
             img_id = item['img_id']
             img_path = os.path.join(self.mscoco_val_path, img_id+".jpg")
             for sent in item['sentf']['mscoco']:
                 self.img_caption_pairs.append((img_path, sent))
         random.shuffle(self.img_caption_pairs)
-        print("Total number of paired image-caption:",
+        print("Total number of paired image-caption for validation:",
               len(self.img_caption_pairs))
 
     def __len__(self) -> int:

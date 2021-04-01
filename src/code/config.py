@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-03-14 00:02:02
-LastEditTime: 2021-03-20 11:52:43
+LastEditTime: 2021-04-01 11:25:02
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/config.py
@@ -47,9 +47,11 @@ def parse_args():
     parser.add_argument('--lang_size', type=int, default=768)
     parser.add_argument('--pretrain_trans_bs', type=int, default=16)
     parser.add_argument('--pretrain_trans_epochs', type=int, default=2)
-    parser.add_argument('--pretrain_trans_lr', type=float, default=1e-4)
+    parser.add_argument('--pretrain_trans_lr', type=float, default=1e-3)
     parser.add_argument('--w', type=float, default=0.5)
     parser.add_argument('--pretrain_grounding_bs', type=int, default=16)
     parser.add_argument('--pretrain_grounding_epochs', type=int, default=3)
+    parser.add_argument('--grounding_lr', type=float, default=3e-4)
+    parser.add_argument('--eval_step', type=int, default=100)
     args = parser.parse_args()
     return args
