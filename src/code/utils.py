@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-03-14 20:24:49
-LastEditTime: 2021-04-01 23:25:39
+LastEditTime: 2021-04-02 23:29:27
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/utils.py
@@ -42,6 +42,7 @@ def count_parameters(model):
     print(table)
     print("Total Trainable Params: {:.2f}M".format(total_params))
     return total_params
+
 
 def set_seed(seed):
     random.seed(seed)

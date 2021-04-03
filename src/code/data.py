@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:10
-LastEditTime: 2021-04-01 13:01:54
+LastEditTime: 2021-04-02 21:22:06
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/data.py
@@ -102,6 +102,7 @@ class PairedCrossModalTrainDataset(Dataset):
             img_path = os.path.join(self.mscoco_train_path, img_id+".jpg")
             for sent in item['sentf']['mscoco']:
                 self.img_caption_pairs.append((img_path, sent))
+                # break
         random.shuffle(self.img_caption_pairs)
         print("Total number of paired image-caption for training:",
               len(self.img_caption_pairs))
@@ -135,6 +136,7 @@ class PairedCrossModalValDataset(Dataset):
             img_path = os.path.join(self.mscoco_val_path, img_id+".jpg")
             for sent in item['sentf']['mscoco']:
                 self.img_caption_pairs.append((img_path, sent))
+                break
         random.shuffle(self.img_caption_pairs)
         print("Total number of paired image-caption for validation:",
               len(self.img_caption_pairs))

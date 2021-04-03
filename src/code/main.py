@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-01 23:29:37
+LastEditTime: 2021-04-02 21:24:01
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -12,10 +12,12 @@ import torch.optim as optim
 from torch.nn import CrossEntropyLoss, MSELoss
 from pytorch_transformers import AdamW, WarmupLinearSchedule
 
+from itertools import chain
 import logging
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import RandomSampler
 from tqdm import tqdm, trange
+from typing_extensions import final
 from config import parse_args, ModelType2Class
 from utils import *
 from model import VisionModel, AdapterModel, PretrainedModel, VisionModelWithMLP, TranslationModel
@@ -202,36 +204,48 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             text_feat = torch.mean(text_feat, dim=1)
             assert len(img_feat.shape) == 2
             assert len(text_feat.shape) == 2
-            infoNCEloss = translation_model.contrastive_forward(
-                img_feat, text_feat)
+            try:
+                infoNCEloss, (v_acc, l_acc) = translation_model.contrastive_forward(
+                    img_feat, text_feat)
+            except:
+                infoNCEloss = translation_model.contrastive_forward(
+                    img_feat, text_feat)
+            finally:
+                pass
             optimizer.zero_grad()
             infoNCEloss.backward()
             optimizer.step()
-            batch_iterator.set_description(
-                "infoNCE loss: {}".format(infoNCEloss.item()))
-            if batch_iter > 0 and batch_iter % args.eval_step == 0:
-                # eval on validation set of MSCOCO
-                vision_acc, lang_acc = eval_grounding(args, vision_model, lang_model, adapter_model,
-                                                      translation_model, device, paired_dataloader_val)
-                logger.info("Grounding Accuracy:")
-                logger.info(f"Current: Vision: {vision_acc}, Lang: {lang_acc}")
-                if (vision_acc + lang_acc) / 2 > best_val_acc:
-                    best_val_acc = (vision_acc + lang_acc) / 2
-                    best_vision_acc = vision_acc
-                    best_lang_acc = lang_acc
-                logger.info(
-                    f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
-                save_model(adapter_model, "../../models/adapter.pkl")
-                save_model(lang_model, "../../models/language_model.pkl")
-                save_model(vision_model, "../../models/ResNeXtMLP.pkl")
-                save_model(translation_model,
-                           "../../models/translation_model.pkl")
+            try:
+                batch_iterator.set_description(
+                    "infoNCE loss: {}, vision_acc: {}, lang_acc: {}".format(infoNCEloss.item(), v_acc, l_acc))
+            except:
+                batch_iterator.set_description(
+                    "infoNCE loss: {}".format(infoNCEloss.item()))
+            # if batch_iter > 0 and batch_iter % args.eval_step == 0:
+            #     # eval on validation set of MSCOCO
+            #     vision_acc, lang_acc = eval_grounding(args, vision_model, lang_model, adapter_model,
+            #                                           translation_model, device, paired_dataloader_val)
+            #     logger.info("Grounding Accuracy:")
+            #     logger.info(f"Current: Vision: {vision_acc}, Lang: {lang_acc}")
+            #     if (vision_acc + lang_acc) / 2 > best_val_acc:
+            #         best_val_acc = (vision_acc + lang_acc) / 2
+            #         best_vision_acc = vision_acc
+            #         best_lang_acc = lang_acc
+            #     logger.info(
+            #         f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
+        save_model(adapter_model,
+                   f"../../models/{args.loss_type}_adapter_{args.model_name}.pkl")
+        save_model(lang_model, f"../../models/{args.loss_type}_{args.model_name}.pkl")
+        save_model(
+            vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_name}.pkl")
+        save_model(translation_model,
+                   f"../../models/{args.loss_type}_translation_model_{args.model_name}.pkl")
     logger.info(f"Finish. Best val acc: {best_val_acc} epoch: {best_epoch}")
 
 
 def main(args):
     # set random seed
-    set_seed(args.seed)
+    # set_seed(args.seed)
 
     model_type = args.model_type
     model_name = args.model_name
@@ -247,8 +261,8 @@ def main(args):
         args.vision_size, args.lang_size, args.latent_size, args.trans_nonlinearity).to(device)
 
     # pretraining using unpaired image-language data
-    train_translation_model(args,
-                            vision_base_model_mlp, language_base_model, adapter_model, translation_model, device)
+    # train_translation_model(args,
+    #                         vision_base_model_mlp, language_base_model, adapter_model, translation_model, device)
 
     # pretraining using paired image-caption data from MSCOCO
     train_grounding(args, vision_base_model_mlp, language_base_model,

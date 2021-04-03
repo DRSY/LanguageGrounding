@@ -15,6 +15,7 @@ from config import parse_args, ModelType2Class
 from utils import *
 from data import *
 from made import MADE
+import math
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -83,7 +84,7 @@ class LogisticDistribution(Distribution):
 
     def sample(self, size):
         z = Uniform(torch.cuda.FloatTensor(
-            [0.]), torch.cuda.FloatTensor([1.])).sample(size).to(torch.device('cuda:2'))
+            [0.]), torch.cuda.FloatTensor([1.])).sample(size).to(torch.device('cuda:3'))
         return torch.log(z) - torch.log(1. - z)
 
 
@@ -140,7 +141,7 @@ class NICE(nn.Module):
         if orientation:
             mask = 1. - mask     # flip mask orientation
         mask = torch.tensor(mask)
-        mask = mask.to(torch.device('cuda:2'))
+        mask = mask.to(torch.device('cuda:3'))
         return mask.float()
 
 
@@ -360,6 +361,8 @@ class TranslationModel(nn.Module):
             non_linearity, nn.ReLU)
 
         self.loss_fct = nn.MSELoss()
+        self.cxt_loss = nn.CrossEntropyLoss()
+        self.margin_loss_fct = nn.MarginRankingLoss(margin=0.5)
         self.nll = nn.NLLLoss()
         self.cos = nn.CosineSimilarity(dim=1)
 
@@ -368,7 +371,8 @@ class TranslationModel(nn.Module):
         # NICE model
         self.vision_downsize = nn.Linear(self.vision_size, self.latent_size)
         self.lang_downsize = nn.Linear(self.language_size, self.latent_size)
-        self.nice = NICE(self.latent_size, self.latent_size)
+        self.nice = NICE(self.latent_size, self.latent_size,
+                         num_coupling_layers=2)
 
         # input pipe
         # self.input_pipe_vision = nn.Sequential(
@@ -426,30 +430,68 @@ class TranslationModel(nn.Module):
         lang`_feat: (batch_size, lang_size)
         """
         bs = vision_feat.shape[0]
-        # NICE version
         vision_feat = self.vision_downsize(vision_feat)
         lang_feat = self.lang_downsize(lang_feat)
+        # simple loss
+        _vision_feat = vision_feat.unsqueeze(1).transpose(1, 2)
+        _lang_feat = lang_feat.unsqueeze(0).transpose(1, 2)
+        cos = nn.CosineSimilarity(dim=1)
+        cosine_sim_matrix = cos(_vision_feat, _lang_feat) / 0.1  # (bs, bs)
+        assert cosine_sim_matrix.shape[0] == cosine_sim_matrix.shape[
+            1] == bs, f"{cosine_sim_matrix.shape}"
+        _label = torch.tensor(list(range(bs))).to(vision_feat.device)
+        simple_loss = .0
+        simple_loss += self.cxt_loss(cosine_sim_matrix, _label)
+        simple_loss += self.cxt_loss(cosine_sim_matrix.transpose(0, 1), _label)
+        return simple_loss
+
+        # NICE version
+        sqrt_dim = math.sqrt(self.latent_size)
         translated_vision_feat = self.NICEFlow(lang_feat, invert=True)
         translated_lang_feat = self.NICEFlow(vision_feat)
 
         assert translated_vision_feat.shape == vision_feat.shape
         assert translated_lang_feat.shape == lang_feat.shape
 
+        # margin loss
+        positive_scores_vision = torch.sum(
+            vision_feat * translated_vision_feat, dim=-1)  # (bs, )
+        negtive_scores_vision = torch.sum(torch.cat([vision_feat[1:], vision_feat[0].unsqueeze(
+            0)], dim=0) * translated_vision_feat, dim=-1)  # (bs, )
+        vision_margin_loss = self.margin_loss_fct(
+            positive_scores_vision, negtive_scores_vision, torch.ones(bs).to(vision_feat.device))
+        positive_scores_lang = torch.sum(
+            lang_feat * translated_lang_feat, dim=-1)  # (bs, )
+        negtive_scores_lang = torch.sum(torch.cat([lang_feat[1:], lang_feat[0].unsqueeze(
+            0)], dim=0) * translated_lang_feat, dim=-1)  # (bs, )
+        lang_margin_loss = self.margin_loss_fct(
+            positive_scores_lang, negtive_scores_lang, torch.ones(bs).to(lang_feat.device))
+        return vision_margin_loss + lang_margin_loss
+
+        # cross entropy loss
         sim_matrix_vision = torch.matmul(
-            vision_feat, translated_vision_feat.transpose(0, 1))  # (bs, bs)
-        logsoftmax_matrix_vision = self.log_softmax(
-            sim_matrix_vision)  # (bs, bs)
+            vision_feat, translated_vision_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
+        _, vision_pred = torch.topk(sim_matrix_vision, k=3, dim=-1)
         _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
-        infoNCE_loss_vision = self.nll(logsoftmax_matrix_vision, _label_vision)
+        vision_p3 = 0
+        for i in range(bs):
+            vision_p3 += 1 if _label_vision[i].item(
+            ) in vision_pred[i].tolist() else 0
+        vision_p3 /= bs
+        infoNCE_loss_vision = self.cxt_loss(sim_matrix_vision, _label_vision)
 
         sim_matrix_lang = torch.matmul(
-            lang_feat, translated_lang_feat.transpose(0, 1))  # (bs, bs)
-        logsoftmax_matrix_lang = self.log_softmax(sim_matrix_lang)  # (bs, bs)
+            lang_feat, translated_lang_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
+        _, lang_pred = torch.topk(sim_matrix_lang, k=3, dim=-1)
         _label_lang = torch.tensor(list(range(bs))).to(vision_feat.device)
-        infoNCE_loss_lang = self.nll(logsoftmax_matrix_lang, _label_lang)
+        lang_p3 = 0
+        for i in range(bs):
+            lang_p3 += 1 if _label_lang[i].item() in lang_pred[i].tolist() else 0
+        lang_p3 /= bs
+        infoNCE_loss_lang = self.cxt_loss(sim_matrix_lang, _label_lang)
 
         infoNCE_loss_total = infoNCE_loss_vision + infoNCE_loss_lang
-        return infoNCE_loss_total
+        return infoNCE_loss_total, (vision_p3, lang_p3)
 
     def forward(self, vision_feature=None, language_feature=None):
         conicity_loss = 0.0
@@ -499,6 +541,30 @@ class TranslationModel(nn.Module):
         assert lang_pred.shape == lang_groundtruth.shape
         lang_acc = torch.sum(lang_pred == lang_groundtruth).item() / bs
         return vision_acc, lang_acc
+
+
+class GroundedModel(nn.Module):
+    """
+    Pretrain LM + Adapter model
+    """
+
+    def __init__(self, args):
+        super().__init__()
+        self.model_type = args.model_type
+        self.model_name = args.model_name
+        self.pretrained_lm = PretrainedModel(self.model_tpye, self.model_name)
+        self.adapter_model = AdapterModel(args, self.pretrained_lm.config)
+
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
+                labels=None, subj_special_start_id=None, obj_special_start_id=None):
+        outputs = self.pretrained_lm(input_ids,
+                                     attention_mask=attention_mask,
+                                     token_type_ids=token_type_ids,
+                                     position_ids=position_ids,
+                                     head_mask=head_mask)
+        text_feat = self.adapter_model(
+            outputs, attention_mask=attention_mask) # (batch_size, seq_length, hidden_dim)
+        return text_feat
 
 
 def test():
