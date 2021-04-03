@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-03-14 00:02:02
-LastEditTime: 2021-04-02 23:17:42
+LastEditTime: 2021-04-03 14:11:51
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/config.py
@@ -54,5 +54,7 @@ def parse_args():
     parser.add_argument('--grounding_lr', type=float, default=3e-4)
     parser.add_argument('--eval_step', type=int, default=1000)
     parser.add_argument('--loss_type', type=str, choices=['margin', 'cross', 'simple'])
+    parser.add_argument('--do_train', action='store_true')
+    parser.add_argument('--do_test', action='store_true')
     args = parser.parse_args()
     return args

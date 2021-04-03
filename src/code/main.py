@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-02 21:24:01
+LastEditTime: 2021-04-03 14:12:27
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -20,7 +20,7 @@ from tqdm import tqdm, trange
 from typing_extensions import final
 from config import parse_args, ModelType2Class
 from utils import *
-from model import VisionModel, AdapterModel, PretrainedModel, VisionModelWithMLP, TranslationModel
+from model import VisionModel, AdapterModel, PretrainedModel, VisionModelWithMLP, TranslationModel, GroundedModel
 from data import *
 
 logger = logging.getLogger(__name__)
@@ -235,7 +235,8 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             #         f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
         save_model(adapter_model,
                    f"../../models/{args.loss_type}_adapter_{args.model_name}.pkl")
-        save_model(lang_model, f"../../models/{args.loss_type}_{args.model_name}.pkl")
+        save_model(
+            lang_model, f"../../models/{args.loss_type}_{args.model_name}.pkl")
         save_model(
             vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_name}.pkl")
         save_model(translation_model,
@@ -269,6 +270,15 @@ def main(args):
                     adapter_model, translation_model, device)
 
 
+def test(args):
+    grounded_modle = GroundedModel(args)
+    grounded_modle.load_from_ckpt(
+        "/home/roy/grounding/models/simple_adapter_roberta-base.pkl")
+
+
 if __name__ == '__main__':
     args = parse_args()
-    main(args)
+    if args.do_train:
+        main(args)
+    elif args.do_test:
+        test(args)

@@ -552,7 +552,7 @@ class GroundedModel(nn.Module):
         super().__init__()
         self.model_type = args.model_type
         self.model_name = args.model_name
-        self.pretrained_lm = PretrainedModel(self.model_tpye, self.model_name)
+        self.pretrained_lm = PretrainedModel(self.model_type, self.model_name)
         self.adapter_model = AdapterModel(args, self.pretrained_lm.config)
 
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
@@ -563,8 +563,13 @@ class GroundedModel(nn.Module):
                                      position_ids=position_ids,
                                      head_mask=head_mask)
         text_feat = self.adapter_model(
-            outputs, attention_mask=attention_mask) # (batch_size, seq_length, hidden_dim)
-        return text_feat
+            outputs, attention_mask=attention_mask)  # (batch_size, seq_length, hidden_dim)
+        return text_feat, outputs
+
+    def load_from_ckpt(self, adapter_ckpt_path: str):
+        print(f"Load checkpoint from {adapter_ckpt_path}")
+        state_dict = torch.load(adapter_ckpt_path)
+        self.adapter_model.load_state_dict(state_dict)
 
 
 def test():
@@ -608,9 +613,4 @@ def test():
 
 
 if __name__ == '__main__':
-    nice_model = NICE(100, 100, 3)
-    x = torch.randn(32, 100)
-    o = nice_model.forward(x)
-    re_x = nice_model.forward(o, invert=True)
-    print(x)
-    print(re_x)
+    pass
