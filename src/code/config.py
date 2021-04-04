@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-03-14 00:02:02
-LastEditTime: 2021-04-03 14:11:51
+LastEditTime: 2021-04-04 11:18:01
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/config.py
@@ -10,14 +10,16 @@ from argparse import ArgumentParser
 from pytorch_transformers import (
     RobertaModel,
     BertModel,
-    DistilBertModel
+    DistilBertModel,
 )
-from transformers import BertTokenizer, RobertaTokenizer, DistilBertTokenizer
+from transformers import MPNetModel, DebertaModel
+from transformers import BertTokenizer, RobertaTokenizer, DistilBertTokenizer, MPNetTokenizer, DebertaTokenizer
 
 ModelType2Class = {
-    'roberta': (RobertaModel, RobertaTokenizer),
+    'distilbert': (DistilBertModel, DistilBertTokenizer),
     'bert': (BertModel, BertTokenizer),
-    'distilbert': (DistilBertModel, DistilBertTokenizer)
+    'roberta': (RobertaModel, RobertaTokenizer),
+    'mpnet': (MPNetModel, MPNetTokenizer),
 }
 
 
@@ -52,9 +54,10 @@ def parse_args():
     parser.add_argument('--pretrain_grounding_bs', type=int, default=16)
     parser.add_argument('--pretrain_grounding_epochs', type=int, default=3)
     parser.add_argument('--grounding_lr', type=float, default=3e-4)
-    parser.add_argument('--eval_step', type=int, default=1000)
+    parser.add_argument('--eval_step', type=int, default=1500)
     parser.add_argument('--loss_type', type=str, choices=['margin', 'cross', 'simple'])
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_test', action='store_true')
+    parser.add_argument('--do_save', action='store_true')
     args = parser.parse_args()
     return args

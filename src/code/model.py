@@ -366,11 +366,15 @@ class TranslationModel(nn.Module):
         self.nll = nn.NLLLoss()
         self.cos = nn.CosineSimilarity(dim=1)
 
-        self.log_softmax = nn.LogSoftmax(dim=1)
-
-        # NICE model
+        # down project vision feat and lang feat to the same space
         self.vision_downsize = nn.Linear(self.vision_size, self.latent_size)
         self.lang_downsize = nn.Linear(self.language_size, self.latent_size)
+
+        # bilinear verion
+        self.bilinear = nn.Bilinear(
+            self.vision_size, self.language_size, 1, bias=False)
+
+        # NICE model
         self.nice = NICE(self.latent_size, self.latent_size,
                          num_coupling_layers=2)
 
@@ -430,9 +434,21 @@ class TranslationModel(nn.Module):
         lang`_feat: (batch_size, lang_size)
         """
         bs = vision_feat.shape[0]
+        # bilinear version
+        vision_feat = vision_feat.unsqueeze(1).repeat(1, bs, 1)
+        lang_feat = lang_feat.unsqueeze(0).repeat(bs, 1, 1)
+        cosine_sim_matrix = self.bilinear(vision_feat, lang_feat).squeeze(-1) # (bs, bs)
+        _label = torch.tensor(list(range(bs))).to(vision_feat.device)
+        simple_loss = .0
+        simple_loss += self.cxt_loss(cosine_sim_matrix, _label)
+        simple_loss += self.cxt_loss(cosine_sim_matrix.transpose(0, 1), _label)
+        return simple_loss
+
         vision_feat = self.vision_downsize(vision_feat)
         lang_feat = self.lang_downsize(lang_feat)
         # simple loss
+        vision_acc = 0
+        lang_acc = 0
         _vision_feat = vision_feat.unsqueeze(1).transpose(1, 2)
         _lang_feat = lang_feat.unsqueeze(0).transpose(1, 2)
         cos = nn.CosineSimilarity(dim=1)
@@ -440,10 +456,21 @@ class TranslationModel(nn.Module):
         assert cosine_sim_matrix.shape[0] == cosine_sim_matrix.shape[
             1] == bs, f"{cosine_sim_matrix.shape}"
         _label = torch.tensor(list(range(bs))).to(vision_feat.device)
+        _, vision_top2 = torch.topk(cosine_sim_matrix, k=3, dim=-1)
+        for i in range(bs):
+            if i in vision_top2[i]:
+                vision_acc += 1
+        _, lang_top2 = torch.topk(
+            cosine_sim_matrix.transpose(0, 1), k=3, dim=-1)
+        for i in range(bs):
+            if i in lang_top2[i]:
+                lang_acc += 1
+        vision_acc /= bs
+        lang_acc /= bs
         simple_loss = .0
         simple_loss += self.cxt_loss(cosine_sim_matrix, _label)
         simple_loss += self.cxt_loss(cosine_sim_matrix.transpose(0, 1), _label)
-        return simple_loss
+        return simple_loss, (vision_acc, lang_acc)
 
         # NICE version
         sqrt_dim = math.sqrt(self.latent_size)
@@ -514,32 +541,29 @@ class TranslationModel(nn.Module):
             conicity_loss = conicity_loss + vision_conicity
         return conicity_loss
 
-    def eval_grounding(self, vision_feat, lang_feat):
+    def eval_grounding(self, vision_feat, lang_feat, p=2):
         bs = vision_feat.shape[0]
-        # NICE version
+        vision_acc = 0.0
+        lang_acc = 0.0
         vision_feat = self.vision_downsize(vision_feat)
         lang_feat = self.lang_downsize(lang_feat)
-        translated_vision_feat = self.NICEFlow(lang_feat, invert=True)
-        translated_lang_feat = self.NICEFlow(vision_feat)
-
-        assert translated_vision_feat.shape == vision_feat.shape
-        assert translated_lang_feat.shape == lang_feat.shape
-
-        sim_matrix_vision = torch.matmul(
-            vision_feat, translated_vision_feat.transpose(0, 1))  # (bs, bs)
-        vision_pred = torch.argmax(sim_matrix_vision, dim=-1)  # (bs,)
-        vision_groundtruth = torch.tensor(
-            list(range(bs)), dtype=torch.long).to(vision_feat.device)
-        assert vision_pred.shape == vision_groundtruth.shape
-        vision_acc = torch.sum(vision_pred == vision_groundtruth).item() / bs
-
-        sim_matrix_lang = torch.matmul(
-            lang_feat, translated_lang_feat.transpose(0, 1))  # (bs, bs)
-        lang_pred = torch.argmax(sim_matrix_lang, dim=-1)  # (bs,)
-        lang_groundtruth = torch.tensor(
-            list(range(bs)), dtype=torch.long).to(lang_feat.device)
-        assert lang_pred.shape == lang_groundtruth.shape
-        lang_acc = torch.sum(lang_pred == lang_groundtruth).item() / bs
+        _vision_feat = vision_feat.unsqueeze(1).transpose(1, 2)
+        _lang_feat = lang_feat.unsqueeze(0).transpose(1, 2)
+        cos = nn.CosineSimilarity(dim=1)
+        cosine_sim_matrix = cos(_vision_feat, _lang_feat) / 0.1  # (bs, bs)
+        assert cosine_sim_matrix.shape[0] == cosine_sim_matrix.shape[
+            1] == bs, f"{cosine_sim_matrix.shape}"
+        _, vision_top2 = torch.topk(cosine_sim_matrix, k=p, dim=-1)
+        for i in range(bs):
+            if i in vision_top2[i]:
+                vision_acc += 1
+        _, lang_top2 = torch.topk(
+            cosine_sim_matrix.transpose(0, 1), k=p, dim=-1)
+        for i in range(bs):
+            if i in lang_top2[i]:
+                lang_acc += 1
+        vision_acc /= bs
+        lang_acc /= bs
         return vision_acc, lang_acc
 
 

@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-04-03 14:27:12
-LastEditTime: 2021-04-03 16:25:18
+LastEditTime: 2021-04-03 23:00:00
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/multipleChoice.py
@@ -79,7 +79,11 @@ class GroundedModelForMultiplceChoice(nn.Module):
         else:
             loss = None
 
-        return loss
+        return loss, reshaped_logits
+
+    def load_adapter_from_ckpt(self, ckpt_path: str):
+        self.grounded_lm.load_from_ckpt(ckpt_path)
+
 
 if __name__ == '__main__':
     pass

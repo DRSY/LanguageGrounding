@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-04-03 14:27:22
-LastEditTime: 2021-04-03 16:26:28
+LastEditTime: 2021-04-03 23:00:11
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/sequenceClassification.py
@@ -67,4 +67,7 @@ class GroundedModelForSequenceClassification(nn.Module):
         else:
             loss = None
 
-        return loss
+        return loss, logits
+
+    def load_adapter_from_ckpt(self, ckpt_path: str):
+        self.grounded_lm.load_from_ckpt(ckpt_path)

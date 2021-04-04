@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-03 14:12:27
+LastEditTime: 2021-04-04 14:31:52
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -21,6 +21,8 @@ from typing_extensions import final
 from config import parse_args, ModelType2Class
 from utils import *
 from model import VisionModel, AdapterModel, PretrainedModel, VisionModelWithMLP, TranslationModel, GroundedModel
+from multipleChoice import GroundedModelForMultiplceChoice
+from sequenceClassification import GroundedModelForSequenceClassification
 from data import *
 
 logger = logging.getLogger(__name__)
@@ -122,11 +124,11 @@ def eval_grounding(args, vision_model, lang_model, adapter_model, translation_mo
         pretrained_model_output = lang_model(**text_input_feat)
         text_feat = adapter_model(
             pretrained_model_output, attention_mask=text_input_feat.attention_mask)
-        text_feat = text_feat[:, 0, :]
+        text_feat = torch.mean(text_feat, dim=1)
         assert len(img_feat.shape) == 2
         assert len(text_feat.shape) == 2
         vision_acc, lang_acc = translation_model.eval_grounding(
-            img_feat, text_feat)
+            img_feat, text_feat, p=3)
         vision_accs.append(vision_acc)
         lang_accs.append(lang_acc)
     avg_vision_acc = sum(vision_accs) / len(vision_accs)
@@ -181,8 +183,8 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
     paired_dataset_val = PairedCrossModalValDataset()
     paired_dataloader_train = DataLoader(paired_dataset_train, batch_size=args.pretrain_grounding_bs, sampler=RandomSampler(
         paired_dataset_train), collate_fn=PairedCrossModalCollator(tokenizer, max_length=20), num_workers=2)
-    paired_dataloader_val = DataLoader(paired_dataset_val, batch_size=args.pretrain_grounding_bs, sampler=RandomSampler(
-        paired_dataset_val), collate_fn=PairedCrossModalCollator(tokenizer, max_length=20), num_workers=2)
+    paired_dataloader_val = DataLoader(paired_dataset_val, batch_size=args.pretrain_grounding_bs,
+                                       shuffle=False, collate_fn=PairedCrossModalCollator(tokenizer, max_length=20), num_workers=2)
 
     # Train!
     best_val_acc = .0
@@ -200,7 +202,6 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             pretrained_model_output = lang_model(**text_input_feat)
             text_feat = adapter_model(
                 pretrained_model_output, attention_mask=text_input_feat.attention_mask)
-            # text_feat = text_feat[:, 0, :]
             text_feat = torch.mean(text_feat, dim=1)
             assert len(img_feat.shape) == 2
             assert len(text_feat.shape) == 2
@@ -221,26 +222,27 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             except:
                 batch_iterator.set_description(
                     "infoNCE loss: {}".format(infoNCEloss.item()))
-            # if batch_iter > 0 and batch_iter % args.eval_step == 0:
-            #     # eval on validation set of MSCOCO
-            #     vision_acc, lang_acc = eval_grounding(args, vision_model, lang_model, adapter_model,
-            #                                           translation_model, device, paired_dataloader_val)
-            #     logger.info("Grounding Accuracy:")
-            #     logger.info(f"Current: Vision: {vision_acc}, Lang: {lang_acc}")
-            #     if (vision_acc + lang_acc) / 2 > best_val_acc:
-            #         best_val_acc = (vision_acc + lang_acc) / 2
-            #         best_vision_acc = vision_acc
-            #         best_lang_acc = lang_acc
-            #     logger.info(
-            #         f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
-        save_model(adapter_model,
-                   f"../../models/{args.loss_type}_adapter_{args.model_name}.pkl")
-        save_model(
-            lang_model, f"../../models/{args.loss_type}_{args.model_name}.pkl")
-        save_model(
-            vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_name}.pkl")
-        save_model(translation_model,
-                   f"../../models/{args.loss_type}_translation_model_{args.model_name}.pkl")
+            if batch_iter > 0 and batch_iter % args.eval_step == 0:
+                # eval on validation set of MSCOCO
+                vision_acc, lang_acc = eval_grounding(args, vision_model, lang_model, adapter_model,
+                                                      translation_model, device, paired_dataloader_val)
+                logger.info("Grounding Accuracy:")
+                logger.info(f"Current: Vision: {vision_acc}, Lang: {lang_acc}")
+                if (vision_acc + lang_acc) / 2 > best_val_acc:
+                    best_val_acc = (vision_acc + lang_acc) / 2
+                    best_vision_acc = vision_acc
+                    best_lang_acc = lang_acc
+                logger.info(
+                    f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
+        if args.do_save:
+            save_model(adapter_model,
+                       f"../../models/{args.loss_type}_adapter_{args.model_type}.pkl")
+            save_model(
+                lang_model, f"../../models/{args.loss_type}_{args.model_type}.pkl")
+            save_model(
+                vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_type}.pkl")
+            save_model(translation_model,
+                       f"../../models/{args.loss_type}_translation_model_{args.model_type}.pkl")
     logger.info(f"Finish. Best val acc: {best_val_acc} epoch: {best_epoch}")
 
 
@@ -271,9 +273,15 @@ def main(args):
 
 
 def test(args):
-    grounded_modle = GroundedModel(args)
-    grounded_modle.load_from_ckpt(
-        "/home/roy/grounding/models/simple_adapter_roberta-base.pkl")
+    # mc
+    grounded_mc = GroundedModelForMultiplceChoice(args)
+    grounded_mc.load_adapter_from_ckpt(
+        "/home/roy/grounding/models/simple_adapter_bert-base-uncased.pkl")
+
+    # cls
+    grounded_mc = GroundedModelForSequenceClassification(args, num_classes=2)
+    grounded_mc.load_adapter_from_ckpt(
+        "/home/roy/grounding/models/simple_adapter_bert-base-uncased.pkl")
 
 
 if __name__ == '__main__':
