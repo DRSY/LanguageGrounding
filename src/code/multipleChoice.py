@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-04-03 14:27:12
-LastEditTime: 2021-04-04 17:06:02
+LastEditTime: 2021-04-04 21:29:18
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/multipleChoice.py
@@ -27,7 +27,7 @@ class GroundedModelForMultiplceChoice(nn.Module):
         # classifier
         self.classifier = nn.Linear(self.hidden_size * 2, 1)
 
-    def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
                 labels=None):
         """
         input_ids: (real_bs, num_choice, seq_length)
@@ -48,7 +48,6 @@ class GroundedModelForMultiplceChoice(nn.Module):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
-            head_mask=head_mask
         )
         assert grounded_output.shape[0] == real_bs * num_choice
         assert original_output.shape[0] == real_bs * num_choice

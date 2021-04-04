@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-04-03 14:27:22
-LastEditTime: 2021-04-03 23:00:11
+LastEditTime: 2021-04-04 21:29:32
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/sequenceClassification.py
@@ -28,7 +28,7 @@ class GroundedModelForSequenceClassification(nn.Module):
         # classifier
         self.classifier = nn.Linear(self.hidden_size * 2, self.num_classes)
 
-    def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None,
                 labels=None):
         """
         input_ids: (bs, seq_length)
@@ -41,7 +41,6 @@ class GroundedModelForSequenceClassification(nn.Module):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
-            head_mask=head_mask
         )
         assert grounded_output.shape[0] == bs and grounded_output.shape[1] == seq_length
         assert original_output.shape[0] == bs and original_output.shape[1] == seq_length

@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-04 20:46:56
+LastEditTime: 2021-04-04 23:48:42
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -127,8 +127,12 @@ def eval_grounding(args, vision_model, lang_model, adapter_model, translation_mo
         text_feat = torch.mean(text_feat, dim=1)
         assert len(img_feat.shape) == 2
         assert len(text_feat.shape) == 2
-        vision_acc, lang_acc = translation_model.eval_grounding(
-            img_feat, text_feat, p=3)
+        if args.loss_type == 'cross':
+            vision_acc, lang_acc = translation_model.eval_grounding_cross(
+                img_feat, text_feat, p=3)
+        else:
+            vision_acc, lang_acc = translation_model.eval_grounding(
+                img_feat, text_feat, p=3)
         vision_accs.append(vision_acc)
         lang_accs.append(lang_acc)
     avg_vision_acc = sum(vision_accs) / len(vision_accs)
@@ -205,17 +209,30 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             text_feat = torch.mean(text_feat, dim=1)
             assert len(img_feat.shape) == 2
             assert len(text_feat.shape) == 2
-            try:
-                infoNCEloss, (v_acc, l_acc) = translation_model.contrastive_forward(
+            if args.loss_type == 'cross':
+                infoNCEloss_lang, (vision_feat, lang_feat) = translation_model.NICE_langloss(
                     img_feat, text_feat)
-            except:
-                infoNCEloss = translation_model.contrastive_forward(
-                    img_feat, text_feat)
-            finally:
-                pass
-            optimizer.zero_grad()
-            infoNCEloss.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                infoNCEloss_lang.backward()
+                optimizer.step()
+                infoNCEloss_vision = translation_model.NICE_visionloss(
+                    lang_feat, vision_feat)
+                optimizer.zero_grad()
+                infoNCEloss_vision.backward()
+                optimizer.step()
+                infoNCEloss = infoNCEloss_vision + infoNCEloss_lang
+            else:
+                try:
+                    infoNCEloss, (v_acc, l_acc) = translation_model.contrastive_forward(
+                        img_feat, text_feat)
+                except:
+                    infoNCEloss = translation_model.contrastive_forward(
+                        img_feat, text_feat)
+                finally:
+                    pass
+                optimizer.zero_grad()
+                infoNCEloss.backward()
+                optimizer.step()
             try:
                 batch_iterator.set_description(
                     "infoNCE loss: {}, vision_acc: {}, lang_acc: {}".format(infoNCEloss.item(), v_acc, l_acc))
@@ -232,16 +249,17 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
                     best_val_acc = (vision_acc + lang_acc) / 2
                     best_vision_acc = vision_acc
                     best_lang_acc = lang_acc
+                    best_epoch = epoch
                     # save model checkpoint with highest val acc
                     if args.do_save:
                         save_model(adapter_model,
-                                f"../../models/{args.loss_type}_adapter_{args.model_type}.pkl")
+                                   f"../../models/{args.loss_type}_adapter_{args.model_type}.pkl")
                         save_model(
                             lang_model, f"../../models/{args.loss_type}_{args.model_type}.pkl")
                         save_model(
                             vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_type}.pkl")
                         save_model(translation_model,
-                                f"../../models/{args.loss_type}_translation_model_{args.model_type}.pkl")
+                                   f"../../models/{args.loss_type}_translation_model_{args.model_type}.pkl")
                 logger.info(
                     f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
     logger.info(f"Finish. Best val acc: {best_val_acc} epoch: {best_epoch}")

@@ -376,17 +376,41 @@ class TranslationModel(nn.Module):
 
         # NICE model
         self.nice = NICE(self.latent_size, self.latent_size,
-                         num_coupling_layers=2)
-
+                         num_coupling_layers=3)
 
     def NICEFlow(self, feature, invert=False):
         translated_feat = self.nice(feature, invert=invert)
         return translated_feat
 
-    def MSE(self, vision_feat, lang_feat, trans_vision_feat, trans_lang_feat):
-        vision_loss = self.loss_fct(trans_vision_feat, vision_feat)
-        lang_loss = self.loss_fct(trans_lang_feat, lang_feat)
-        return vision_loss + lang_loss
+    def NICE_vision2lang(self, vision_feat):
+        _output = self.NICEFlow(vision_feat, invert=False)
+        return _output
+
+    def NICE_lang2vision(self, lang_feat):
+        _output = self.NICEFlow(lang_feat, invert=True)
+        return _output
+
+    def NICE_langloss(self, vision_feat, lang_feat):
+        vision_feat = self.vision_downsize(vision_feat)
+        lang_feat = self.lang_downsize(lang_feat)
+        bs = vision_feat.shape[0]
+        sqrt_dim = math.sqrt(vision_feat.shape[-1])
+        translated_lang_feat = self.NICE_vision2lang(vision_feat)
+        sim_matrix_vision = torch.matmul(
+            lang_feat, translated_lang_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
+        _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
+        infoNCE_loss_lang = self.cxt_loss(sim_matrix_vision, _label_vision)
+        return infoNCE_loss_lang, (vision_feat, lang_feat)
+
+    def NICE_visionloss(self, lang_feat, vision_feat):
+        bs = vision_feat.shape[0]
+        sqrt_dim = math.sqrt(vision_feat.shape[-1])
+        translated_vision_feat = self.NICE_lang2vision(lang_feat)
+        sim_matrix_vision = torch.matmul(
+            vision_feat, translated_vision_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
+        _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
+        infoNCE_loss_vision = self.cxt_loss(sim_matrix_vision, _label_vision)
+        return infoNCE_loss_vision
 
     def contrastive_forward(self, vision_feat, lang_feat):
         """
@@ -397,7 +421,8 @@ class TranslationModel(nn.Module):
         # bilinear version
         vision_feat = vision_feat.unsqueeze(1).repeat(1, bs, 1)
         lang_feat = lang_feat.unsqueeze(0).repeat(bs, 1, 1)
-        cosine_sim_matrix = self.bilinear(vision_feat, lang_feat).squeeze(-1) # (bs, bs)
+        cosine_sim_matrix = self.bilinear(
+            vision_feat, lang_feat).squeeze(-1)  # (bs, bs)
         _label = torch.tensor(list(range(bs))).to(vision_feat.device)
         simple_loss = .0
         simple_loss += self.cxt_loss(cosine_sim_matrix, _label)
@@ -439,21 +464,6 @@ class TranslationModel(nn.Module):
 
         assert translated_vision_feat.shape == vision_feat.shape
         assert translated_lang_feat.shape == lang_feat.shape
-
-        # margin loss
-        positive_scores_vision = torch.sum(
-            vision_feat * translated_vision_feat, dim=-1)  # (bs, )
-        negtive_scores_vision = torch.sum(torch.cat([vision_feat[1:], vision_feat[0].unsqueeze(
-            0)], dim=0) * translated_vision_feat, dim=-1)  # (bs, )
-        vision_margin_loss = self.margin_loss_fct(
-            positive_scores_vision, negtive_scores_vision, torch.ones(bs).to(vision_feat.device))
-        positive_scores_lang = torch.sum(
-            lang_feat * translated_lang_feat, dim=-1)  # (bs, )
-        negtive_scores_lang = torch.sum(torch.cat([lang_feat[1:], lang_feat[0].unsqueeze(
-            0)], dim=0) * translated_lang_feat, dim=-1)  # (bs, )
-        lang_margin_loss = self.margin_loss_fct(
-            positive_scores_lang, negtive_scores_lang, torch.ones(bs).to(lang_feat.device))
-        return vision_margin_loss + lang_margin_loss
 
         # cross entropy loss
         sim_matrix_vision = torch.matmul(
@@ -508,14 +518,8 @@ class TranslationModel(nn.Module):
         # bilinear version
         vision_feat = vision_feat.unsqueeze(1).repeat(1, bs, 1)
         lang_feat = lang_feat.unsqueeze(0).repeat(bs, 1, 1)
-        cosine_sim_matrix = self.bilinear(vision_feat, lang_feat).squeeze(-1) # (bs, bs)
-        _label = torch.tensor(list(range(bs))).to(vision_feat.device)
-        # vision_feat = self.vision_downsize(vision_feat)
-        # lang_feat = self.lang_downsize(lang_feat)
-        # _vision_feat = vision_feat.unsqueeze(1).transpose(1, 2)
-        # _lang_feat = lang_feat.unsqueeze(0).transpose(1, 2)
-        # cos = nn.CosineSimilarity(dim=1)
-        # cosine_sim_matrix = cos(_vision_feat, _lang_feat) / 0.1  # (bs, bs)
+        cosine_sim_matrix = self.bilinear(
+            vision_feat, lang_feat).squeeze(-1)  # (bs, bs)
         assert cosine_sim_matrix.shape[0] == cosine_sim_matrix.shape[
             1] == bs, f"{cosine_sim_matrix.shape}"
         _, vision_top2 = torch.topk(cosine_sim_matrix, k=p, dim=-1)
@@ -530,6 +534,37 @@ class TranslationModel(nn.Module):
         vision_acc /= bs
         lang_acc /= bs
         return vision_acc, lang_acc
+
+    def eval_grounding_cross(self, vision_feat, lang_feat, p=2):
+        bs = vision_feat.shape[0]
+        # NICE version
+        sqrt_dim = math.sqrt(self.latent_size)
+        translated_vision_feat = self.NICEFlow(lang_feat, invert=True)
+        translated_lang_feat = self.NICEFlow(vision_feat)
+
+        assert translated_vision_feat.shape == vision_feat.shape
+        assert translated_lang_feat.shape == lang_feat.shape
+
+        # cross entropy loss
+        sim_matrix_vision = torch.matmul(
+            vision_feat, translated_vision_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
+        _, vision_pred = torch.topk(sim_matrix_vision, k=p, dim=-1)
+        _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
+        vision_p3 = 0
+        for i in range(bs):
+            vision_p3 += 1 if _label_vision[i].item(
+            ) in vision_pred[i].tolist() else 0
+        vision_p3 /= bs
+
+        sim_matrix_lang = torch.matmul(
+            lang_feat, translated_lang_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
+        _, lang_pred = torch.topk(sim_matrix_lang, k=p, dim=-1)
+        _label_lang = torch.tensor(list(range(bs))).to(vision_feat.device)
+        lang_p3 = 0
+        for i in range(bs):
+            lang_p3 += 1 if _label_lang[i].item() in lang_pred[i].tolist() else 0
+        lang_p3 /= bs
+        return vision_p3, lang_p3
 
 
 class GroundedModel(nn.Module):
