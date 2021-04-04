@@ -378,46 +378,6 @@ class TranslationModel(nn.Module):
         self.nice = NICE(self.latent_size, self.latent_size,
                          num_coupling_layers=2)
 
-        # input pipe
-        # self.input_pipe_vision = nn.Sequential(
-        #     nn.Linear(vision_size, latent_size),
-        #     # self.non_linearity_class(),
-        #     # nn.Linear(vision_size, latent_size)
-        # )
-        # self.input_pipe_language = nn.Sequential(
-        #     nn.Linear(language_size, latent_size),
-        #     # self.non_linearity_class(),
-        #     # nn.Linear(language_size, latent_size)
-        # )
-        # # output pipe
-        # self.output_pipe_vision = nn.Sequential(
-        #     nn.Linear(latent_size, vision_size),
-        #     # self.non_linearity_class(),
-        #     # nn.Linear(vision_size, vision_size)
-        # )
-        # self.output_pipe_language = nn.Sequential(
-        #     nn.Linear(latent_size, language_size),
-        #     # self.non_linearity_class(),
-        #     # nn.Linear(language_size, language_size)
-        # )
-        # # one-direction pipe
-        # self.vision2lang = nn.Sequential(
-        #     self.input_pipe_vision,
-        #     self.output_pipe_language
-        # )
-        # self.language2vision = nn.Sequential(
-        #     self.input_pipe_language,
-        #     self.output_pipe_vision
-        # )
-        # # cyclic pipe
-        # self.vision2lang2vision = nn.Sequential(
-        #     self.vision2lang,
-        #     self.language2vision
-        # )
-        # self.language2vision2language = nn.Sequential(
-        #     self.language2vision,
-        #     self.vision2lang
-        # )
 
     def NICEFlow(self, feature, invert=False):
         translated_feat = self.nice(feature, invert=invert)
@@ -545,12 +505,17 @@ class TranslationModel(nn.Module):
         bs = vision_feat.shape[0]
         vision_acc = 0.0
         lang_acc = 0.0
-        vision_feat = self.vision_downsize(vision_feat)
-        lang_feat = self.lang_downsize(lang_feat)
-        _vision_feat = vision_feat.unsqueeze(1).transpose(1, 2)
-        _lang_feat = lang_feat.unsqueeze(0).transpose(1, 2)
-        cos = nn.CosineSimilarity(dim=1)
-        cosine_sim_matrix = cos(_vision_feat, _lang_feat) / 0.1  # (bs, bs)
+        # bilinear version
+        vision_feat = vision_feat.unsqueeze(1).repeat(1, bs, 1)
+        lang_feat = lang_feat.unsqueeze(0).repeat(bs, 1, 1)
+        cosine_sim_matrix = self.bilinear(vision_feat, lang_feat).squeeze(-1) # (bs, bs)
+        _label = torch.tensor(list(range(bs))).to(vision_feat.device)
+        # vision_feat = self.vision_downsize(vision_feat)
+        # lang_feat = self.lang_downsize(lang_feat)
+        # _vision_feat = vision_feat.unsqueeze(1).transpose(1, 2)
+        # _lang_feat = lang_feat.unsqueeze(0).transpose(1, 2)
+        # cos = nn.CosineSimilarity(dim=1)
+        # cosine_sim_matrix = cos(_vision_feat, _lang_feat) / 0.1  # (bs, bs)
         assert cosine_sim_matrix.shape[0] == cosine_sim_matrix.shape[
             1] == bs, f"{cosine_sim_matrix.shape}"
         _, vision_top2 = torch.topk(cosine_sim_matrix, k=p, dim=-1)

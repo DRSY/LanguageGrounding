@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-04 14:31:52
+LastEditTime: 2021-04-04 20:46:56
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
@@ -232,17 +232,18 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
                     best_val_acc = (vision_acc + lang_acc) / 2
                     best_vision_acc = vision_acc
                     best_lang_acc = lang_acc
+                    # save model checkpoint with highest val acc
+                    if args.do_save:
+                        save_model(adapter_model,
+                                f"../../models/{args.loss_type}_adapter_{args.model_type}.pkl")
+                        save_model(
+                            lang_model, f"../../models/{args.loss_type}_{args.model_type}.pkl")
+                        save_model(
+                            vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_type}.pkl")
+                        save_model(translation_model,
+                                f"../../models/{args.loss_type}_translation_model_{args.model_type}.pkl")
                 logger.info(
                     f"Best: Vision: {best_vision_acc}, Lang: {best_lang_acc}")
-        if args.do_save:
-            save_model(adapter_model,
-                       f"../../models/{args.loss_type}_adapter_{args.model_type}.pkl")
-            save_model(
-                lang_model, f"../../models/{args.loss_type}_{args.model_type}.pkl")
-            save_model(
-                vision_model, f"../../models/{args.loss_type}_ResNeXtMLP_{args.model_type}.pkl")
-            save_model(translation_model,
-                       f"../../models/{args.loss_type}_translation_model_{args.model_type}.pkl")
     logger.info(f"Finish. Best val acc: {best_val_acc} epoch: {best_epoch}")
 
 

@@ -1,7 +1,7 @@
 '''
 Author: your name
 Date: 2021-04-03 14:27:12
-LastEditTime: 2021-04-03 23:00:00
+LastEditTime: 2021-04-04 17:06:02
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/multipleChoice.py
@@ -67,6 +67,7 @@ class GroundedModelForMultiplceChoice(nn.Module):
         # (real_bs * num_choice, 2*hidden_size)
         concatenated_output = torch.cat(
             [original_pooled_output, grounded_pooled_output], dim=-1)
+        assert concatenated_output.shape[-1] == 2 * self.hidden_size
         # (real_bs * num_choice, 1)
         logits = self.classifier(concatenated_output)
         # (real_bs, num_choice)
