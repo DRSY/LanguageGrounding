@@ -12,7 +12,7 @@ import logging
 import os
 import pprint
 from config import parse_args, ModelType2Class
-from utils import *
+from myutils import *
 from data import *
 from made import MADE
 import math
@@ -84,7 +84,7 @@ class LogisticDistribution(Distribution):
 
     def sample(self, size):
         z = Uniform(torch.cuda.FloatTensor(
-            [0.]), torch.cuda.FloatTensor([1.])).sample(size).to(torch.device('cuda:3'))
+            [0.]), torch.cuda.FloatTensor([1.])).sample(size).to(torch.device('cuda:0'))
         return torch.log(z) - torch.log(1. - z)
 
 
@@ -141,7 +141,7 @@ class NICE(nn.Module):
         if orientation:
             mask = 1. - mask     # flip mask orientation
         mask = torch.tensor(mask)
-        mask = mask.to(torch.device('cuda:3'))
+        mask = mask.to(torch.device('cuda:0'))
         return mask.float()
 
 
@@ -252,7 +252,7 @@ class PretrainedModel(nn.Module):
                              attention_mask=attention_mask,
                              token_type_ids=token_type_ids,
                              position_ids=position_ids,
-                             head_mask=head_mask)
+                             )
 
         return outputs  # (loss), logits, (hidden_states), (attentions)
 
@@ -305,7 +305,10 @@ class AdapterModel(nn.Module):
         sequence_output = outputs[0]
 
         # ((batch_size, seq_length, project_hidden_size), ..., ())
-        hidden_states = outputs[2]
+        try:
+            hidden_states = outputs[2]
+        except:
+            hidden_states = outputs[1]
         if attention_mask is not None:
             assert sequence_output.shape[:-1] == attention_mask.shape
         hidden_states_last = torch.zeros(
@@ -400,9 +403,11 @@ class TranslationModel(nn.Module):
             lang_feat, translated_lang_feat.transpose(0, 1)).transpose(0, 1) / sqrt_dim  # (bs, bs)
         _label_vision = torch.tensor(list(range(bs))).to(vision_feat.device)
         infoNCE_loss_lang = self.cxt_loss(sim_matrix_vision, _label_vision)
-        return infoNCE_loss_lang, (vision_feat, lang_feat)
+        return infoNCE_loss_lang
 
     def NICE_visionloss(self, lang_feat, vision_feat):
+        vision_feat = self.vision_downsize(vision_feat)
+        lang_feat = self.lang_downsize(lang_feat)
         bs = vision_feat.shape[0]
         sqrt_dim = math.sqrt(vision_feat.shape[-1])
         translated_vision_feat = self.NICE_lang2vision(lang_feat)

@@ -1,29 +1,28 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:05
-LastEditTime: 2021-04-04 23:48:42
+LastEditTime: 2021-04-07 19:09:35
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/main.py
 '''
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.nn import CrossEntropyLoss, MSELoss
 from pytorch_transformers import AdamW, WarmupLinearSchedule
 
-from itertools import chain
 import logging
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import RandomSampler
 from tqdm import tqdm, trange
 from typing_extensions import final
 from config import parse_args, ModelType2Class
-from utils import *
+from myutils import *
 from model import VisionModel, AdapterModel, PretrainedModel, VisionModelWithMLP, TranslationModel, GroundedModel
 from multipleChoice import GroundedModelForMultiplceChoice
 from sequenceClassification import GroundedModelForSequenceClassification
 from data import *
+from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -210,13 +209,13 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             assert len(img_feat.shape) == 2
             assert len(text_feat.shape) == 2
             if args.loss_type == 'cross':
-                infoNCEloss_lang, (vision_feat, lang_feat) = translation_model.NICE_langloss(
+                infoNCEloss_lang = translation_model.NICE_langloss(
                     img_feat, text_feat)
                 optimizer.zero_grad()
-                infoNCEloss_lang.backward()
+                infoNCEloss_lang.backward(retain_graph=True)
                 optimizer.step()
                 infoNCEloss_vision = translation_model.NICE_visionloss(
-                    lang_feat, vision_feat)
+                    text_feat, img_feat)
                 optimizer.zero_grad()
                 infoNCEloss_vision.backward()
                 optimizer.step()
@@ -239,7 +238,7 @@ def train_grounding(args, vision_model, lang_model, adapter_model, translation_m
             except:
                 batch_iterator.set_description(
                     "infoNCE loss: {}".format(infoNCEloss.item()))
-            if batch_iter > 0 and batch_iter % args.eval_step == 0:
+            if batch_iter >= 0 and batch_iter % args.eval_step == 0:
                 # eval on validation set of MSCOCO
                 vision_acc, lang_acc = eval_grounding(args, vision_model, lang_model, adapter_model,
                                                       translation_model, device, paired_dataloader_val)
@@ -292,15 +291,37 @@ def main(args):
 
 
 def test(args):
-    # mc
+    # multiple-choice
     grounded_mc = GroundedModelForMultiplceChoice(args)
-    grounded_mc.load_adapter_from_ckpt(
-        "/home/roy/grounding/models/simple_adapter_bert-base-uncased.pkl")
+    #grounded_mc.load_adapter_from_ckpt(
+    #    f"/home/roy/grounding/models/{args.loss_type}_adapter_{args.model_type}.pkl")
+    grounded_mc.to(torch.device('cuda:1'))
 
-    # cls
-    grounded_mc = GroundedModelForSequenceClassification(args, num_classes=2)
-    grounded_mc.load_adapter_from_ckpt(
-        "/home/roy/grounding/models/simple_adapter_bert-base-uncased.pkl")
+    # sanity check
+    tokenizer = AutoTokenizer.from_pretrained("roberta-base")
+    prompt = "I love listening to music."
+    c1 = "Therefore I am happy everyday."
+    c2 = "I hate my life."
+    c3 = "I hate my life."
+    input_dict = tokenizer([prompt, prompt, prompt], [c1, c2, c3], return_tensors='pt', padding=True).to(torch.device('cuda:1'))
+    label = torch.tensor(0).unsqueeze(0).to(torch.device('cuda:1'))
+    loss, logits = grounded_mc(**{k: v.unsqueeze(0) for k,v in input_dict.items()}, labels=label)
+    print(loss)
+    print(logits.shape)
+
+    # # # sequence classification
+    # grounded_cls = GroundedModelForSequenceClassification(args, num_classes=2)
+    # # grounded_cls.load_adapter_from_ckpt(
+    # #     f"/home/roy/grounding/models/{args.loss_type}_adapter_{args.model_type}.pkl")
+    # grounded_cls.to(torch.device('cuda:3'))
+    # tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    # sentence = "I really enjoy the food here."
+    # labels = torch.tensor(1).unsqueeze(0).to(torch.device('cuda:3'))
+    # input_dict = tokenizer(sentence, return_tensors='pt').to(
+    #     torch.device('cuda:3'))
+    # loss, logits = grounded_cls(**input_dict, labels=labels)
+    # print(loss)
+    # print(logits.shape)
 
 
 if __name__ == '__main__':

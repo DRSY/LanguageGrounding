@@ -1,7 +1,7 @@
 '''
 Author: Roy
 Date: 2021-03-14 00:02:10
-LastEditTime: 2021-04-02 21:22:06
+LastEditTime: 2021-04-06 13:23:51
 LastEditors: Please set LastEditors
 Description: In User Settings Edit
 FilePath: /grounding/src/code/data.py
@@ -9,7 +9,7 @@ FilePath: /grounding/src/code/data.py
 from torch.utils.data import Dataset, DataLoader, RandomSampler
 from torchvision import transforms
 from PIL import Image
-from utils import image_transformation
+from myutils import image_transformation
 import os
 import random
 import torch
